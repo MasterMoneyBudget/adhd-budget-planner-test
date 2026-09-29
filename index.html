@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in — Budget & Planner</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&family=Nunito+Sans:wght@400;600;700;800&display=swap');
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:'Nunito Sans', sans-serif;
+  min-height:100vh;
+  background: linear-gradient(160deg, #FBF3F5 0%, #F7E4EA 55%, #F3D9E2 100%);
+  display:flex; align-items:center; justify-content:center;
+  padding:24px;
+  -webkit-font-smoothing:antialiased;
+}
+
+.login-card{
+  background:#FFFFFF; border:1px solid #F1D8DF; border-radius:22px;
+  padding:40px 36px; width:100%; max-width:400px;
+  box-shadow:0 30px 80px rgba(90,45,60,0.18);
+}
+.login-logo{
+  width:48px;height:48px;border-radius:14px;
+  background:linear-gradient(135deg,#E5A0B5,#C9738C);
+  display:flex;align-items:center;justify-content:center;
+  color:#fff;font-family:'Fraunces',serif;font-weight:700;font-size:22px;
+  margin:0 auto 18px;
+}
+.login-title{font-family:'Fraunces',serif;font-size:23px;font-weight:600;text-align:center;color:#3E2A31;margin:0;}
+.login-sub{font-size:13.5px;color:#8A6B73;text-align:center;margin-top:6px;margin-bottom:24px;line-height:1.5;}
+.login-error{
+  background:#FAE6EA;color:#C9576D;font-size:13px;font-weight:700;
+  padding:10px 14px;border-radius:10px;margin-bottom:14px;display:none;
+}
+.login-error.show{display:block;}
+.login-success{
+  background:#E9F1E6;color:#5E8A56;font-size:13px;font-weight:700;
+  padding:10px 14px;border-radius:10px;margin-bottom:14px;display:none;line-height:1.5;
+}
+.login-success.show{display:block;}
+.login-note{
+  background:#FBE7EC;color:#8A6B73;font-size:12px;font-weight:700;
+  padding:9px 13px;border-radius:10px;margin-bottom:14px;line-height:1.5;
+}
+.login-field{margin-bottom:12px;}
+.login-field label{display:block;font-size:12px;font-weight:800;color:#8A6B73;margin-bottom:5px;}
+.login-field input{
+  width:100%;padding:10px 12px;border:1.5px solid #F1D8DF;border-radius:8px;
+  font-size:14px;background:#fff;color:#3E2A31;font-family:inherit;
+}
+.login-field input:focus{outline:2px solid #E5A0B5;outline-offset:1px;}
+.login-btn{
+  width:100%; display:flex; align-items:center; justify-content:center;
+  background:#C9738C; color:#fff; border:none; padding:12px 16px;
+  border-radius:999px; font-weight:800; font-size:14px; margin-top:6px; cursor:pointer;
+}
+.login-btn:hover{filter:brightness(0.96);}
+.login-btn[disabled]{opacity:.6;cursor:default;}
+.login-switch{
+  display:block;width:100%;text-align:center;margin-top:18px;font-size:12.5px;
+  color:#8A6B73;background:none;border:none;font-family:inherit;cursor:pointer;
+}
+.login-switch b{color:#C9738C;text-decoration:underline;}
+.trust-row{
+  display:flex; align-items:center; gap:8px; font-size:12.5px; color:#8A6B73;
+  font-weight:700; margin:2px 0 4px; cursor:pointer; user-select:none;
+}
+.trust-row input{width:15px;height:15px;accent-color:#C9738C;cursor:pointer;}
+.login-config-warning{
+  background:#FBEEDC;color:#B27A3E;font-size:12px;font-weight:700;
+  padding:10px 13px;border-radius:10px;margin-bottom:16px;line-height:1.5;display:none;
+}
+.login-config-warning.show{display:block;}
+</style>
+</head>
+<body>
+
+<div class="login-card">
+  <div class="login-logo">B</div>
+  <h1 class="login-title" id="loginTitle">Sign in</h1>
+  <div class="login-sub" id="loginSub">Your planner follows you to any device you sign in on.</div>
+
+  <div class="login-config-warning" id="configWarning">
+    This page isn't connected to Supabase yet — open index.html and fill in
+    <b>SUPABASE_URL</b> and <b>SUPABASE_ANON_KEY</b> near the top of the script.
+  </div>
+  <div class="login-error" id="loginError"></div>
+  <div class="login-success" id="loginSuccess"></div>
+
+  <!-- Sign in -->
+  <div id="signinForm">
+    <div class="login-field"><label>Email</label><input type="email" id="signinEmail" placeholder="you@example.com"></div>
+    <div class="login-field"><label>Password</label><input type="password" id="signinPassword" placeholder="Your password"></div>
+    <label class="trust-row"><input type="checkbox" id="signinTrustCheck" checked> Trust this device — stay signed in</label>
+    <button class="login-btn" id="signinBtn">Sign in</button>
+    <button class="login-switch" id="toForgotBtn">Forgot your password?</button>
+    <button class="login-switch" id="toCreateBtn">New here? <b>Create an account</b></button>
+  </div>
+
+  <!-- Create account -->
+  <div id="createForm" style="display:none;">
+    <div class="login-note">Your planner is stored under your Supabase account, so it follows you to any device you sign in on — phone, tablet or desktop.</div>
+    <div class="login-field"><label>Email</label><input type="email" id="createEmail" placeholder="you@example.com"></div>
+    <div class="login-field"><label>Create a password</label><input type="password" id="createPassword" placeholder="At least 6 characters"></div>
+    <div class="login-field"><label>Confirm password</label><input type="password" id="createPasswordConfirm" placeholder="Type it again"></div>
+    <label class="trust-row"><input type="checkbox" id="createTrustCheck" checked> Trust this device — stay signed in</label>
+    <button class="login-btn" id="createBtn">Create account</button>
+    <button class="login-switch" id="toSigninBtn">Already have an account? <b>Sign in</b></button>
+  </div>
+
+  <!-- Forgot password: request a reset link -->
+  <div id="forgotForm" style="display:none;">
+    <div class="login-note">Enter the email on your account and we'll send a link to reset your password.</div>
+    <div class="login-field"><label>Email</label><input type="email" id="forgotEmail" placeholder="you@example.com"></div>
+    <button class="login-btn" id="forgotBtn">Send reset link</button>
+    <button class="login-switch" id="toSigninFromForgotBtn">Back to sign in</button>
+  </div>
+
+  <!-- Forgot password: set a new password (arrived here via the emailed link) -->
+  <div id="resetForm" style="display:none;">
+    <div class="login-note">Choose a new password for your account.</div>
+    <div class="login-field"><label>New password</label><input type="password" id="resetPassword" placeholder="At least 6 characters"></div>
+    <div class="login-field"><label>Confirm new password</label><input type="password" id="resetPasswordConfirm" placeholder="Type it again"></div>
+    <button class="login-btn" id="resetBtn">Set new password</button>
+  </div>
+</div>
+
+<script>
+/* ============ CONFIG ============
+   Fill these in from your Supabase project: Dashboard → Settings → API.
+   The anon/public key is meant to be exposed in client-side code like this —
+   your data stays protected by the Row Level Security policies from setup.sql. */
+const SUPABASE_URL = 'https://ohdnhkbykqnlxgohkmyw.supabase.co';        // e.g. https://xxxxxxxxxxxx.supabase.co
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9oZG5oa2J5a3FubHhnb2hrbXl3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA3MTE1MTIsImV4cCI6MjEwNjI4NzUxMn0.1XjexMZ0vljotvwKvxCtcwoAK5vQa8pbvKiPrB0GVcI';
+
+/* Point this at your planner file. If index.html and the planner sit in the
+   same folder, the default below works as-is — just change the filename if
+   your planner is named differently. */
+const PLANNER_URL = 'bloom-money-planner.html';
+
+const isConfigured = SUPABASE_URL.indexOf('YOUR_SUPABASE_URL') === -1 && SUPABASE_ANON_KEY.indexOf('YOUR_SUPABASE_ANON_KEY') === -1;
+
+/* ============ TRUST THIS DEVICE ============
+   When trusted, the session token is kept in localStorage, which survives
+   closing the browser — you stay signed in. When not trusted, it's kept in
+   sessionStorage instead, which clears as soon as the tab/browser closes —
+   safer on a shared or public device. */
+const TRUST_KEY = 'bloomTrustDevice';
+function isTrustedDevice(){
+  try{ return localStorage.getItem(TRUST_KEY) !== 'false'; }catch(e){ return true; }
+}
+function setTrustedDevice(trusted){
+  try{ localStorage.setItem(TRUST_KEY, trusted ? 'true' : 'false'); }catch(e){}
+}
+const authStorage = {
+  getItem: (key)=>{ try{ return isTrustedDevice() ? localStorage.getItem(key) : sessionStorage.getItem(key); }catch(e){ return null; } },
+  setItem: (key, value)=>{ try{ if(isTrustedDevice()) localStorage.setItem(key, value); else sessionStorage.setItem(key, value); }catch(e){} },
+  removeItem: (key)=>{ try{ localStorage.removeItem(key); sessionStorage.removeItem(key); }catch(e){} },
+};
+const sb = isConfigured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { storage: authStorage, persistSession: true, autoRefreshToken: true }
+}) : null;
+
+/* ============ UI ============ */
+const errorEl = document.getElementById('loginError');
+const successEl = document.getElementById('loginSuccess');
+const signinForm = document.getElementById('signinForm');
+const createForm = document.getElementById('createForm');
+const forgotForm = document.getElementById('forgotForm');
+const resetForm = document.getElementById('resetForm');
+const titleEl = document.getElementById('loginTitle');
+const subEl = document.getElementById('loginSub');
+
+function showError(msg){ successEl.classList.remove('show'); errorEl.textContent=msg; errorEl.classList.add('show'); }
+function clearMessages(){ errorEl.classList.remove('show'); successEl.classList.remove('show'); }
+function showSuccess(msg){ errorEl.classList.remove('show'); successEl.textContent=msg; successEl.classList.add('show'); }
+function goToPlanner(){ window.location.href = PLANNER_URL; }
+
+function hideAllForms(){
+  signinForm.style.display='none'; createForm.style.display='none';
+  forgotForm.style.display='none'; resetForm.style.display='none';
+}
+function showSigninView(){
+  titleEl.textContent = 'Sign in';
+  subEl.textContent = 'Your planner follows you to any device you sign in on.';
+  hideAllForms(); signinForm.style.display='';
+  clearMessages();
+}
+function showCreateView(){
+  titleEl.textContent = 'Create your account';
+  subEl.textContent = 'Set a password once — sign in from any device after that.';
+  hideAllForms(); createForm.style.display='';
+  clearMessages();
+}
+function showForgotView(){
+  titleEl.textContent = 'Reset your password';
+  subEl.textContent = "We'll email you a link to get back in.";
+  hideAllForms(); forgotForm.style.display='';
+  clearMessages();
+}
+function showResetView(){
+  titleEl.textContent = 'Choose a new password';
+  subEl.textContent = "You're almost back in — just set a new password.";
+  hideAllForms(); resetForm.style.display='';
+  clearMessages();
+}
+document.getElementById('toCreateBtn').addEventListener('click', showCreateView);
+document.getElementById('toSigninBtn').addEventListener('click', showSigninView);
+document.getElementById('toForgotBtn').addEventListener('click', showForgotView);
+document.getElementById('toSigninFromForgotBtn').addEventListener('click', showSigninView);
+
+function setBusy(btn, busy, label){
+  btn.disabled = busy;
+  btn.textContent = busy ? 'Please wait…' : label;
+}
+
+async function doSignin(){
+  clearMessages();
+  const email = document.getElementById('signinEmail').value.trim();
+  const pw = document.getElementById('signinPassword').value;
+  if(!email || !pw){ showError('Enter your email and password.'); return; }
+  setTrustedDevice(document.getElementById('signinTrustCheck').checked);
+  const btn = document.getElementById('signinBtn');
+  setBusy(btn, true, 'Sign in');
+  const { error } = await sb.auth.signInWithPassword({ email, password: pw });
+  setBusy(btn, false, 'Sign in');
+  if(error){ showError(error.message); return; }
+  goToPlanner();
+}
+
+async function doCreate(){
+  clearMessages();
+  const email = document.getElementById('createEmail').value.trim();
+  const pw = document.getElementById('createPassword').value;
+  const pw2 = document.getElementById('createPasswordConfirm').value;
+  if(!email){ showError('Enter your email.'); return; }
+  if(pw.length < 6){ showError('Use at least 6 characters for your password.'); return; }
+  if(pw !== pw2){ showError("Those passwords don't match."); return; }
+
+  setTrustedDevice(document.getElementById('createTrustCheck').checked);
+  const btn = document.getElementById('createBtn');
+  setBusy(btn, true, 'Create account');
+  const { data, error } = await sb.auth.signUp({ email, password: pw });
+  setBusy(btn, false, 'Create account');
+  if(error){ showError(error.message); return; }
+
+  if(data.session){
+    // Email confirmation is off in this project — signed in immediately.
+    goToPlanner();
+  } else {
+    // Email confirmation is on — Supabase sent a confirmation link.
+    showSuccess("Almost there — check your email for a confirmation link, then come back here and sign in.");
+    showSigninView();
+    document.getElementById('signinEmail').value = email;
+  }
+}
+
+document.getElementById('signinBtn').addEventListener('click', doSignin);
+document.getElementById('createBtn').addEventListener('click', doCreate);
+document.getElementById('signinPassword').addEventListener('keydown', (e)=>{ if(e.key==='Enter') doSignin(); });
+document.getElementById('createPasswordConfirm').addEventListener('keydown', (e)=>{ if(e.key==='Enter') doCreate(); });
+
+async function doForgotPassword(){
+  clearMessages();
+  const email = document.getElementById('forgotEmail').value.trim();
+  if(!email){ showError('Enter your email.'); return; }
+  const btn = document.getElementById('forgotBtn');
+  setBusy(btn, true, 'Send reset link');
+  const { error } = await sb.auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin + window.location.pathname
+  });
+  setBusy(btn, false, 'Send reset link');
+  if(error){ showError(error.message); return; }
+  showSuccess("If an account exists for that email, we've sent a link to reset your password. Check your inbox.");
+}
+async function doSetNewPassword(){
+  clearMessages();
+  const pw = document.getElementById('resetPassword').value;
+  const pw2 = document.getElementById('resetPasswordConfirm').value;
+  if(pw.length < 6){ showError('Use at least 6 characters for your password.'); return; }
+  if(pw !== pw2){ showError("Those passwords don't match."); return; }
+  const btn = document.getElementById('resetBtn');
+  setBusy(btn, true, 'Set new password');
+  const { error } = await sb.auth.updateUser({ password: pw });
+  setBusy(btn, false, 'Set new password');
+  if(error){ showError(error.message); return; }
+  // Clear the recovery token from the URL so refreshing this page doesn't re-trigger the reset view.
+  history.replaceState(null, '', window.location.pathname);
+  goToPlanner();
+}
+document.getElementById('forgotBtn').addEventListener('click', doForgotPassword);
+document.getElementById('resetBtn').addEventListener('click', doSetNewPassword);
+document.getElementById('forgotEmail').addEventListener('keydown', (e)=>{ if(e.key==='Enter') doForgotPassword(); });
+document.getElementById('resetPasswordConfirm').addEventListener('keydown', (e)=>{ if(e.key==='Enter') doSetNewPassword(); });
+
+function isRecoveryFlow(){
+  // Supabase appends #...&type=recovery to the URL when someone arrives via
+  // the emailed "reset your password" link.
+  return window.location.hash.includes('type=recovery');
+}
+async function bootstrap(){
+  if(!isConfigured){
+    document.getElementById('configWarning').classList.add('show');
+    return;
+  }
+  if(isRecoveryFlow()){
+    showResetView();
+    return;
+  }
+  // If already signed in on this device/browser, skip straight to the planner.
+  const { data } = await sb.auth.getSession();
+  if(data && data.session){
+    titleEl.textContent = 'Signing you in…';
+    subEl.textContent = "You're already signed in — taking you to your planner.";
+    hideAllForms();
+    goToPlanner();
+    return;
+  }
+  showSigninView();
+}
+bootstrap();
+</script>
+</body>
+</html>
