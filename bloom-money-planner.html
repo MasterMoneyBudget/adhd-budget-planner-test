@@ -253,6 +253,7 @@ main.content{flex:1;min-width:0;padding:34px 40px 80px;max-width:980px;}
 .dot.payday{background:var(--success);}
 .dot.note{background:var(--primary-strong);}
 .dot.debt{background:var(--info);}
+.dot.savings{background:var(--warning);}
 .upcoming-row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);font-size:13.5px;}
 .upcoming-row:last-child{border-bottom:none;}
 .upcoming-row .when{color:var(--ink-soft);font-weight:700;font-size:12.5px;min-width:64px;}
@@ -943,8 +944,8 @@ function setIncomeBudget(mi, val){
    your data stays protected by the Row Level Security policies from setup.sql.
    Leave these as-is if you're not using Supabase — the planner falls back to
    on-device storage automatically. */
-const SUPABASE_URL = 'https://kocgjiucuhwqkpukoipy.supabase.co';        // e.g. https://xxxxxxxxxxxx.supabase.co
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtvY2dqaXVjdWh3cWtwdWtvaXB5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk0Mzk2ODYsImV4cCI6MjEwNTAxNTY4Nn0.yMrnbaLuUYuW389oRLCzCfLNsCx3RaCUjcAHXZlcc-w';
+const SUPABASE_URL = 'https://ohdnhkbykqnlxgohkmyw.supabase.co';        // e.g. https://xxxxxxxxxxxx.supabase.co
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9oZG5oa2J5a3FubHhnb2hrbXl3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA3MTE1MTIsImV4cCI6MjEwNjI4NzUxMn0.1XjexMZ0vljotvwKvxCtcwoAK5vQa8pbvKiPrB0GVcI';
 const LOGIN_URL = 'index.html';
 
 const supabaseConfigured = SUPABASE_URL.indexOf('YOUR_SUPABASE_URL')===-1 && SUPABASE_ANON_KEY.indexOf('YOUR_SUPABASE_ANON_KEY')===-1;
@@ -1843,7 +1844,47 @@ function removeMonthEntriesForEvent(eventId){
     });
   }
 }
-/* Build the 12 date keys (same year) for a monthly-recurring event, clamped to short months */
+/* Build the set of date keys for a recurring event, starting from the chosen
+   date and running one year forward. */
+const RECURRENCE_LABELS = {
+  none:'', daily:'repeats daily', weekly:'repeats weekly', biweekly:'repeats every 2 weeks',
+  semimonthly:'repeats twice a month', monthly:'repeats every month'
+};
+function dateKeyFromDate(d){ return dateKey(d.getFullYear(), d.getMonth(), d.getDate()); }
+function generateRecurrenceDates(startKey, pattern){
+  const start = new Date(startKey+'T00:00:00');
+  if(pattern==='none' || !pattern) return [startKey];
+  const endBoundary = new Date(start); endBoundary.setFullYear(endBoundary.getFullYear()+1);
+  const keys = [];
+  if(pattern==='daily'){
+    let cur = new Date(start);
+    while(cur < endBoundary){ keys.push(dateKeyFromDate(cur)); cur.setDate(cur.getDate()+1); }
+  } else if(pattern==='weekly'){
+    let cur = new Date(start);
+    while(cur < endBoundary){ keys.push(dateKeyFromDate(cur)); cur.setDate(cur.getDate()+7); }
+  } else if(pattern==='biweekly'){
+    let cur = new Date(start);
+    while(cur < endBoundary){ keys.push(dateKeyFromDate(cur)); cur.setDate(cur.getDate()+14); }
+  } else if(pattern==='semimonthly'){
+    let cur = new Date(start);
+    while(cur < endBoundary){
+      keys.push(dateKeyFromDate(cur));
+      const second = new Date(cur); second.setDate(second.getDate()+15);
+      if(second < endBoundary) keys.push(dateKeyFromDate(second));
+      cur.setMonth(cur.getMonth()+1);
+    }
+  } else if(pattern==='monthly'){
+    const day = start.getDate();
+    let cur = new Date(start);
+    while(cur < endBoundary){
+      const daysInMonth = new Date(cur.getFullYear(), cur.getMonth()+1, 0).getDate();
+      keys.push(dateKey(cur.getFullYear(), cur.getMonth(), Math.min(day, daysInMonth)));
+      cur.setMonth(cur.getMonth()+1);
+    }
+  }
+  return keys;
+}
+/* Kept for the sample-data seeder, which still generates a fixed 12-month set. */
 function recurringKeysForYear(year, day){
   const keys=[];
   for(let m=0;m<12;m++){
@@ -1865,17 +1906,17 @@ function openDayModal(key){
           <span class="dot ${e.type}" style="margin-top:5px;"></span>
           <div style="flex:1;padding-left:8px;">
             <div>${escapeHtml(e.label)}${e.amount?` &middot; <b>${fmtMoneyPlain(e.amount)}</b>`:''}</div>
-            ${e.seriesId?'<div style="font-size:11px;color:var(--ink-soft);font-weight:700;margin-top:2px;">&#8635; repeats every month</div>':''}
+            ${e.seriesId?`<div style="font-size:11px;color:var(--ink-soft);font-weight:700;margin-top:2px;">&#8635; ${RECURRENCE_LABELS[e.recurrence]||'repeats every month'}</div>`:''}
           </div>
           <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end;">
-            ${e.seriesId? `<button class="icon-btn" data-remove-one="${e.id}">Remove this month</button><button class="icon-btn" data-remove-series="${e.seriesId}">Remove every month</button>` : `<button class="icon-btn" data-remove-one="${e.id}">Remove</button>`}
+            ${e.seriesId? `<button class="icon-btn" data-remove-one="${e.id}">Remove this one</button><button class="icon-btn" data-remove-series="${e.seriesId}">Remove whole series</button>` : `<button class="icon-btn" data-remove-one="${e.id}">Remove</button>`}
           </div>
         </div>`).join('') : '<div style="font-size:13px;color:var(--ink-soft);">Nothing added for this day yet.</div>'}
     </div>
     <div class="field-row">
-      <div class="field" style="flex:0 0 110px;">
+      <div class="field" style="flex:0 0 130px;">
         <label>Type</label>
-        <select id="dayEventType"><option value="note">Note</option><option value="bill">Bill due</option><option value="payday">Payday</option><option value="debt">Debt payment</option></select>
+        <select id="dayEventType"><option value="note">Note</option><option value="bill">Bill due</option><option value="payday">Payday</option><option value="debt">Debt payment</option><option value="savings">Savings</option></select>
       </div>
       <div class="field"><label>What is it?</label><input id="dayEventLabel" placeholder="e.g. Rent due"></div>
     </div>
@@ -1897,10 +1938,17 @@ function openDayModal(key){
         </select>
       </div>
     </div>
-    <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:700;color:var(--ink);margin:6px 0 4px;cursor:pointer;">
-      <input type="checkbox" id="dayEventRecurring" style="width:16px;height:16px;">
-      Repeat this note every month
-    </label>
+    <div class="field">
+      <label>Repeat</label>
+      <select id="dayEventRecurring">
+        <option value="none">Doesn't repeat</option>
+        <option value="daily">Daily</option>
+        <option value="weekly">Weekly</option>
+        <option value="biweekly">Biweekly (every 2 weeks)</option>
+        <option value="semimonthly">Semimonthly (twice a month)</option>
+        <option value="monthly">Monthly</option>
+      </select>
+    </div>
     <div class="modal-actions">
       <button class="btn ghost" id="closeDayModal">Close</button>
       <button class="btn" id="addDayEvent">Add to this day</button>
@@ -1908,7 +1956,7 @@ function openDayModal(key){
   `,(m)=>{
     const typeSel = m.querySelector('#dayEventType');
     const flowSel = m.querySelector('#dayEventFlow');
-    const defaultFlow = { bill:'none', payday:'income', debt:'none', note:'none' };
+    const defaultFlow = { bill:'none', payday:'income', debt:'none', note:'none', savings:'none' };
     typeSel.addEventListener('change', ()=>{ flowSel.value = defaultFlow[typeSel.value]; });
 
     m.querySelector('#closeDayModal').addEventListener('click', closeModal);
@@ -1942,14 +1990,12 @@ function openDayModal(key){
       if(!lbl) return;
       const amount=parseFloat(m.querySelector('#dayEventAmount').value)||0;
       const flowTo=flowSel.value;
-      const recurring=m.querySelector('#dayEventRecurring').checked;
+      const recurrence=m.querySelector('#dayEventRecurring').value;
 
-      if(recurring){
+      if(recurrence && recurrence!=='none'){
         const seriesId=uid();
-        const day=Number(key.split('-')[2]);
-        const year=Number(key.split('-')[0]);
-        recurringKeysForYear(year, day).forEach(k=>{
-          const ev={id:uid(), type, label:lbl, amount, flowTo, seriesId};
+        generateRecurrenceDates(key, recurrence).forEach(k=>{
+          const ev={id:uid(), type, label:lbl, amount, flowTo, seriesId, recurrence};
           if(!state.events[k]) state.events[k]=[];
           state.events[k].push(ev);
           addMonthEntryForEvent(ev, k);
@@ -2411,6 +2457,8 @@ function refreshAfterDataChange(){
   if(currentPanel==='months') renderMonths();
   if(currentPanel==='yearly') renderYearly();
   if(currentPanel==='translog') renderTranslog();
+  if(currentPanel==='debt') renderDebt();
+  if(currentPanel==='savings') renderSavings();
 }
 function openQuickAddModal(){
   const today = new Date();
@@ -2473,6 +2521,7 @@ function openQuickAddModal(){
         item.name = name || (debt ? debt.name : 'Debt payment');
         ensureDebtMonth(mi);
         state.debtSpending[mi][debtId].push(item);
+        applyDebtPayment(debtId, amount);
       } else if(cat==='savings'){
         const fundId = m.querySelector('#qaFund').value;
         if(!fundId) return;
@@ -2480,6 +2529,7 @@ function openQuickAddModal(){
         item.name = name || (fund ? fund.name : 'Savings contribution');
         ensureSavingsMonth(mi);
         state.savingsSpending[mi][fundId].push(item);
+        applySavingsContribution(fundId, amount);
       } else {
         item.name = name || defaultName;
         state.months[mi][cat].push(item);
@@ -2965,6 +3015,27 @@ function updateBudgetCardVisual(inputEl, mi, itemId, budgetStore, spendStore){
   const row = card.querySelector('.progress-row');
   if(row){ row.innerHTML = `<span>${fmtMoneyPlain(actual)} spent</span><span>${remaining>=0?fmtMoneyPlain(remaining)+' left':fmtMoneyPlain(Math.abs(remaining))+' over'}</span>`; }
 }
+/* Keep a debt's balance / a fund's saved amount in sync with logged payments
+   and contributions. Only applies going forward, from the moment someone
+   actually logs a payment/contribution through the app — it never touches
+   historical entries already on the books. */
+function applyDebtPayment(debtId, amount){
+  const debt = state.debts.find(d=>d.id===debtId);
+  if(debt) debt.balance = Math.max(0, Number(debt.balance||0) - Number(amount||0));
+}
+function reverseDebtPayment(debtId, amount){
+  const debt = state.debts.find(d=>d.id===debtId);
+  if(debt) debt.balance = Number(debt.balance||0) + Number(amount||0);
+}
+function applySavingsContribution(fundId, amount){
+  const fund = state.funds.find(f=>f.id===fundId);
+  if(fund) fund.saved = Number(fund.saved||0) + Number(amount||0);
+}
+function reverseSavingsContribution(fundId, amount){
+  const fund = state.funds.find(f=>f.id===fundId);
+  if(fund) fund.saved = Math.max(0, Number(fund.saved||0) - Number(amount||0));
+}
+
 function wireBudgetCards(el, mi, items, budgetStore, spendStore, onListChange, onStats, opts){
   opts = opts||{};
   el.querySelectorAll('[data-cb-budget]').forEach(inp=>{
@@ -2982,7 +3053,9 @@ function wireBudgetCards(el, mi, items, budgetStore, spendStore, onListChange, o
   }));
   el.querySelectorAll('[data-cb-item-del]').forEach(b=>b.addEventListener('click',()=>{
     const [itemId, spendId] = b.dataset.cbItemDel.split('|');
+    const removed = spendStore[mi] && spendStore[mi][itemId] && spendStore[mi][itemId].find(x=>x.id===spendId);
     if(spendStore[mi] && spendStore[mi][itemId]) spendStore[mi][itemId] = spendStore[mi][itemId].filter(x=>x.id!==spendId);
+    if(removed && opts.onReverse) opts.onReverse(itemId, removed.amount);
     saveState(); onListChange(true);
   }));
 }
@@ -3011,6 +3084,7 @@ function openItemSpendModal(itemId, items, mi, spendStore, onChange, opts){
       if(!spendStore[mi]) spendStore[mi]={};
       if(!spendStore[mi][itemId]) spendStore[mi][itemId]=[];
       spendStore[mi][itemId].push({id:uid(), name, amount, date});
+      if(opts.onApply) opts.onApply(itemId, amount);
       saveState(); closeModal(); onChange(true);
     });
   });
@@ -3053,7 +3127,9 @@ function debtCardsHtml(mi){
 }
 function wireDebtCards(el, mi, onListChange, onStats){
   wireBudgetCards(el, mi, state.debts, state.debtBudgets, state.debtSpending, onListChange, onStats,
-    {addLabel:'payment', namePlaceholder:'e.g. Visa card payment'});
+    {addLabel:'payment', namePlaceholder:'e.g. Visa card payment',
+     onApply:(debtId, amount)=>applyDebtPayment(debtId, amount),
+     onReverse:(debtId, amount)=>reverseDebtPayment(debtId, amount)});
 }
 
 /* ---- savings wrappers (per-fund monthly budget + logged contributions) ---- */
@@ -3063,7 +3139,9 @@ function savingsCardsHtml(mi){
 }
 function wireSavingsCards(el, mi, onListChange, onStats){
   wireBudgetCards(el, mi, state.funds, state.savingsBudgets, state.savingsSpending, onListChange, onStats,
-    {addLabel:'contribution', namePlaceholder:'e.g. Emergency fund transfer'});
+    {addLabel:'contribution', namePlaceholder:'e.g. Emergency fund transfer',
+     onApply:(fundId, amount)=>applySavingsContribution(fundId, amount),
+     onReverse:(fundId, amount)=>reverseSavingsContribution(fundId, amount)});
 }
 
 document.getElementById('addEnvelopeFromMonthBtn').addEventListener('click',()=>openNewEnvelopeModal(renderMonths));
@@ -3106,6 +3184,20 @@ async function requireSignIn(){
   // send people to a non-functional login screen — let the planner run
   // locally-only, same as before this feature existed.
   if(!supabaseConfigured) return true;
+  if(!window.supabase){
+    // The Supabase library didn't load (slow/blocked network) — this is not
+    // the same as "not signed in". Show a retry instead of bouncing to the
+    // login page, which is what can cause an infinite back-and-forth loop
+    // between this page and index.html.
+    document.getElementById('authCheckOverlay').innerHTML = `
+      <div style="text-align:center;max-width:320px;padding:0 20px;">
+        <div style="width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#E5A0B5,#C9738C);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Fraunces',serif;font-weight:700;font-size:22px;margin:0 auto 16px;">B</div>
+        <div style="font-size:15px;color:#3E2A31;font-weight:800;margin-bottom:8px;">Connection problem</div>
+        <div style="font-size:13px;color:#8A6B73;margin-bottom:16px;">Couldn't load the sign-in service. Check your connection and try again.</div>
+        <button onclick="location.reload()" style="background:#C9738C;color:#fff;border:none;padding:10px 20px;border-radius:999px;font-weight:800;font-size:13px;cursor:pointer;">Try again</button>
+      </div>`;
+    return false;
+  }
   const session = await getSupabaseSession();
   if(!session){
     window.location.href = LOGIN_URL;

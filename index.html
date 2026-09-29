@@ -162,7 +162,7 @@ const authStorage = {
   setItem: (key, value)=>{ try{ if(isTrustedDevice()) localStorage.setItem(key, value); else sessionStorage.setItem(key, value); }catch(e){} },
   removeItem: (key)=>{ try{ localStorage.removeItem(key); sessionStorage.removeItem(key); }catch(e){} },
 };
-const sb = isConfigured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+const sb = (isConfigured && window.supabase) ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { storage: authStorage, persistSession: true, autoRefreshToken: true }
 }) : null;
 
@@ -306,6 +306,18 @@ function isRecoveryFlow(){
 async function bootstrap(){
   if(!isConfigured){
     document.getElementById('configWarning').classList.add('show');
+    return;
+  }
+  if(!window.supabase){
+    // The Supabase library didn't load (slow/blocked network) — show a clear
+    // retry instead of guessing at sign-in status, which is what can cause
+    // this page and the planner to bounce back and forth at each other.
+    titleEl.textContent = 'Connection problem';
+    subEl.textContent = "Couldn't load the sign-in service — check your connection and try again.";
+    hideAllForms();
+    showError('');
+    document.getElementById('loginError').innerHTML = '<button class="login-btn" onclick="location.reload()" style="margin-top:4px;">Try again</button>';
+    document.getElementById('loginError').classList.add('show');
     return;
   }
   if(isRecoveryFlow()){
