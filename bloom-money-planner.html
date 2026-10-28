@@ -267,6 +267,11 @@ main.content{flex:1;min-width:0;padding:34px 40px 80px;max-width:980px;}
 .row-line.expense .ramt{color:var(--danger);}
 .month-pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:18px;}
 .month-pill{border:1.5px solid var(--line);background:var(--surface);padding:7px 13px;border-radius:999px;font-size:12.5px;font-weight:800;color:var(--ink-soft);}
+.year-switcher{display:flex;align-items:center;gap:10px;margin-bottom:10px;}
+.year-switcher .yr-btn{border:1.5px solid var(--line);background:var(--surface);width:30px;height:30px;border-radius:999px;font-weight:800;color:var(--ink-soft);display:flex;align-items:center;justify-content:center;cursor:pointer;}
+.year-switcher .yr-btn:hover{color:var(--primary-strong);border-color:var(--primary-strong);}
+.year-switcher .yr-label{font-family:'Fraunces',serif;font-size:17px;font-weight:600;color:var(--ink);min-width:48px;text-align:center;}
+.year-switcher .yr-note{font-size:11.5px;color:var(--ink-soft);font-weight:700;}
 .month-pill.active{background:var(--primary-strong);color:#fff;border-color:var(--primary-strong);}
 
 textarea.notes{
@@ -453,6 +458,7 @@ textarea.notes:focus, input:focus, select:focus{outline:2px solid var(--primary)
       <div class="page-head">
         <div><h1>Home</h1><div class="sub">A glance at this month — the numbers, and the charts behind them.</div></div>
       </div>
+      <div class="year-switcher" id="homeYearSwitcher"></div>
       <div class="month-pills" id="homeMonthPills"></div>
       <div class="grid-3" id="homeStats"></div>
 
@@ -577,6 +583,7 @@ textarea.notes:focus, input:focus, select:focus{outline:2px solid var(--primary)
       <div class="page-head">
         <div><h1 id="monthTitle">January</h1><div class="sub">Income, spending, and anything worth remembering.</div></div>
       </div>
+      <div class="year-switcher" id="monthYearSwitcher"></div>
       <div class="month-pills" id="monthPills"></div>
 
       <div class="grid-3" id="monthStats"></div>
@@ -639,6 +646,7 @@ textarea.notes:focus, input:focus, select:focus{outline:2px solid var(--primary)
         <div><h1>Yearly review</h1><div class="sub">Every monthly tab, every fund and every debt, added up into one picture.</div></div>
       </div>
 
+      <div class="year-switcher" id="yearlyYearSwitcher"></div>
       <div class="grid-3" id="yearlyTopStats"></div>
 
       <div class="section-title"><h2>Month by month</h2></div>
@@ -908,23 +916,46 @@ let state = {
   debtOrder:'avalanche',
   archives:{}
 };
+let currentYear=new Date().getFullYear();
+/* Every per-month store (months, budgets, spending, income budget) is keyed
+   by "year-monthIndex" instead of just monthIndex, so switching currentYear
+   switches which year's data every one of these functions reads and writes —
+   without needing to change any of their call sites. */
+function pk(mi){ return currentYear+'-'+mi; }
+function knownDataYears(){
+  const years = new Set([currentYear]);
+  const scan = (store)=>{ Object.keys(store||{}).forEach(k=>{ const y=parseInt(String(k).split('-')[0],10); if(!isNaN(y)) years.add(y); }); };
+  scan(state.months); scan(state.monthlyIncomeBudget); scan(state.envelopeBudgets);
+  scan(state.envelopeSpending); scan(state.debtBudgets); scan(state.debtSpending);
+  scan(state.savingsBudgets); scan(state.savingsSpending);
+  return [...years].sort((a,b)=>a-b);
+}
 function emptyMonth(){return {income:[],bills:[],expenses:[],debt:[],savings:[],notes:''};}
-for(let i=0;i<12;i++) state.months[i]=emptyMonth();
+function getMonthData(mi){
+  const k=pk(mi);
+  if(!state.months[k]) state.months[k]=emptyMonth();
+  return state.months[k];
+}
+for(let i=0;i<12;i++) getMonthData(i);
 
 /* ---- generic per-item monthly budget/spending helpers (used by envelopes, debts, funds) ---- */
 function ensureSpendMonth(spendStore, mi, items){
-  if(!spendStore[mi]) spendStore[mi]={};
-  items.forEach(it=>{ if(!spendStore[mi][it.id]) spendStore[mi][it.id]=[]; });
+  const k=pk(mi);
+  if(!spendStore[k]) spendStore[k]={};
+  items.forEach(it=>{ if(!spendStore[k][it.id]) spendStore[k][it.id]=[]; });
 }
 function getItemBudget(budgetStore, mi, itemId){
-  return (budgetStore[mi] && Number(budgetStore[mi][itemId])) || 0;
+  const k=pk(mi);
+  return (budgetStore[k] && Number(budgetStore[k][itemId])) || 0;
 }
 function setItemBudget(budgetStore, mi, itemId, val){
-  if(!budgetStore[mi]) budgetStore[mi]={};
-  budgetStore[mi][itemId]=val;
+  const k=pk(mi);
+  if(!budgetStore[k]) budgetStore[k]={};
+  budgetStore[k][itemId]=val;
 }
 function itemActual(spendStore, mi, itemId){
-  return sumCat((spendStore[mi] && spendStore[mi][itemId]) || []);
+  const k=pk(mi);
+  return sumCat((spendStore[k] && spendStore[k][itemId]) || []);
 }
 function itemsTotals(items, mi, budgetStore, spendStore){
   let planned=0, actual=0;
@@ -933,7 +964,7 @@ function itemsTotals(items, mi, budgetStore, spendStore){
 }
 
 function ensureEnvelopeMonth(mi){ ensureSpendMonth(state.envelopeSpending, mi, state.envelopes); }
-function ensureEnvelopeBudgetMonth(mi){ if(!state.envelopeBudgets[mi]) state.envelopeBudgets[mi]={}; }
+function ensureEnvelopeBudgetMonth(mi){ if(!state.envelopeBudgets[pk(mi)]) state.envelopeBudgets[pk(mi)]={}; }
 function getEnvelopeBudget(mi, envId){ return getItemBudget(state.envelopeBudgets, mi, envId); }
 function setEnvelopeBudget(mi, envId, val){ setItemBudget(state.envelopeBudgets, mi, envId, val); }
 function envelopeActual(mi, envId){ return itemActual(state.envelopeSpending, mi, envId); }
@@ -952,10 +983,10 @@ function savingsItemActual(mi, fundId){ return itemActual(state.savingsSpending,
 function savingsItemTotals(mi){ return itemsTotals(state.funds, mi, state.savingsBudgets, state.savingsSpending); }
 
 function getIncomeBudget(mi){
-  return Number(state.monthlyIncomeBudget[mi])||0;
+  return Number(state.monthlyIncomeBudget[pk(mi)])||0;
 }
 function setIncomeBudget(mi, val){
-  state.monthlyIncomeBudget[mi] = val;
+  state.monthlyIncomeBudget[pk(mi)] = val;
 }
 
 /* ============ SUPABASE (cross-device sync) ============
@@ -1167,8 +1198,26 @@ async function loadState(){
       state.debts = parsed.debts||[];
       state.goals = parsed.goals||[];
       state.debtOrder = parsed.debtOrder||'avalanche';
+      migrateMonthKeysToYear();
     }
   }catch(e){ /* first run, nothing saved yet */ }
+}
+/* Older saves keyed these stores by plain month index ("0".."11") with no
+   year at all. Move any of those straight across to this year's keys
+   ("2026-0", etc.) so existing data keeps showing up exactly where it did
+   before, now that every month is year-scoped. Already-migrated data (keys
+   that already contain a year) is left untouched. */
+function migrateMonthKeysToYear(){
+  const stores = [state.months, state.monthlyIncomeBudget, state.envelopeBudgets,
+    state.envelopeSpending, state.debtBudgets, state.debtSpending, state.savingsBudgets, state.savingsSpending];
+  stores.forEach(store=>{
+    if(!store) return;
+    Object.keys(store).filter(k=>/^\d+$/.test(k)).forEach(k=>{
+      const newKey = currentYear+'-'+k;
+      if(!(newKey in store)) store[newKey] = store[k];
+      delete store[k];
+    });
+  });
 }
 
 /* ============ navigation ============ */
@@ -1411,7 +1460,7 @@ document.getElementById('archiveAndResetBtn').addEventListener('click',()=>{
         budget:{income:0,debt:0,savings:0}, monthlyIncomeBudget:{}, envelopes:makeDefaultEnvelopes(),
         envelopeBudgets:{}, envelopeSpending:{}, debtBudgets:{}, debtSpending:{}, savingsBudgets:{}, savingsSpending:{},
         debtOrder:'avalanche', archives:preservedArchives};
-      for(let i=0;i<12;i++) state.months[i]=emptyMonth();
+      for(let i=0;i<12;i++) state.months[pk(i)]=emptyMonth();
       applyTheme(); updateBrand(); saveState();
       closeModal(); goTo('settings');
     });
@@ -1530,43 +1579,49 @@ function stateToCSV(){
   state.debts.forEach(d=> lines.push(csvRow(['debt', d.id, d.name, d.balance, d.apr, d.minPayment, d.original||d.balance])));
   state.goals.forEach(g=> lines.push(csvRow(['goal', g.id, g.title, g.targetDate||'', g.status, g.notes||''])));
   state.envelopes.forEach(env=> lines.push(csvRow(['envelope', env.id, env.name, env.isCustom?'true':'false'])));
-  for(let i=0;i<12;i++){
-    lines.push(csvRow(['incomebudget', i, getIncomeBudget(i)]));
-    state.envelopes.forEach(env=>{
-      const b = getEnvelopeBudget(i, env.id);
-      if(b) lines.push(csvRow(['envelopebudget', i, env.id, b]));
-    });
-    state.debts.forEach(d=>{
-      const b = getDebtBudget(i, d.id);
-      if(b) lines.push(csvRow(['debtbudget', i, d.id, b]));
-    });
-    state.funds.forEach(f=>{
-      const b = getSavingsBudget(i, f.id);
-      if(b) lines.push(csvRow(['savingsbudget', i, f.id, b]));
-    });
-    ['income','bills','expenses','debt','savings'].forEach(cat=>{
-      state.months[i][cat].forEach(it=> lines.push(csvRow(['monthitem', i, cat, it.id, it.name, it.amount, it.sourceEventId||''])));
-    });
-    if(state.months[i].notes) lines.push(csvRow(['monthnotes', i, state.months[i].notes]));
-    const spend = state.envelopeSpending[i];
-    if(spend){
-      Object.keys(spend).forEach(envId=>{
-        spend[envId].forEach(it=> lines.push(csvRow(['envelopespend', i, envId, it.id, it.name, it.amount, it.date||''])));
+  const savedYear = currentYear;
+  knownDataYears().forEach(yr=>{
+    currentYear = yr; // pk() and every getter below read whichever year is active
+    for(let i=0;i<12;i++){
+      lines.push(csvRow(['incomebudget', yr, i, getIncomeBudget(i)]));
+      state.envelopes.forEach(env=>{
+        const b = getEnvelopeBudget(i, env.id);
+        if(b) lines.push(csvRow(['envelopebudget', yr, i, env.id, b]));
       });
-    }
-    const dspend = state.debtSpending[i];
-    if(dspend){
-      Object.keys(dspend).forEach(debtId=>{
-        dspend[debtId].forEach(it=> lines.push(csvRow(['debtspend', i, debtId, it.id, it.name, it.amount, it.date||''])));
+      state.debts.forEach(d=>{
+        const b = getDebtBudget(i, d.id);
+        if(b) lines.push(csvRow(['debtbudget', yr, i, d.id, b]));
       });
-    }
-    const sspend = state.savingsSpending[i];
-    if(sspend){
-      Object.keys(sspend).forEach(fundId=>{
-        sspend[fundId].forEach(it=> lines.push(csvRow(['savingsspend', i, fundId, it.id, it.name, it.amount, it.date||''])));
+      state.funds.forEach(f=>{
+        const b = getSavingsBudget(i, f.id);
+        if(b) lines.push(csvRow(['savingsbudget', yr, i, f.id, b]));
       });
+      const monthData = getMonthData(i);
+      ['income','bills','expenses','debt','savings'].forEach(cat=>{
+        monthData[cat].forEach(it=> lines.push(csvRow(['monthitem', yr, i, cat, it.id, it.name, it.amount, it.sourceEventId||''])));
+      });
+      if(monthData.notes) lines.push(csvRow(['monthnotes', yr, i, monthData.notes]));
+      const spend = state.envelopeSpending[pk(i)];
+      if(spend){
+        Object.keys(spend).forEach(envId=>{
+          spend[envId].forEach(it=> lines.push(csvRow(['envelopespend', yr, i, envId, it.id, it.name, it.amount, it.date||''])));
+        });
+      }
+      const dspend = state.debtSpending[pk(i)];
+      if(dspend){
+        Object.keys(dspend).forEach(debtId=>{
+          dspend[debtId].forEach(it=> lines.push(csvRow(['debtspend', yr, i, debtId, it.id, it.name, it.amount, it.date||''])));
+        });
+      }
+      const sspend = state.savingsSpending[pk(i)];
+      if(sspend){
+        Object.keys(sspend).forEach(fundId=>{
+          sspend[fundId].forEach(it=> lines.push(csvRow(['savingsspend', yr, i, fundId, it.id, it.name, it.amount, it.date||''])));
+        });
+      }
     }
-  }
+  });
+  currentYear = savedYear;
   Object.keys(state.events).forEach(key=>{
     state.events[key].forEach(ev=> lines.push(csvRow(['event', key, ev.id, ev.type, ev.label, ev.amount||0, ev.flowTo||'none', ev.seriesId||'', ev.paid?'true':'false'])));
   });
@@ -1595,13 +1650,18 @@ function csvToState(text){
   const fresh = {
     settings:{name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0},
     funds:[], debts:[], goals:[], events:{},
-    months:(()=>{ const m={}; for(let i=0;i<12;i++) m[i]=emptyMonth(); return m; })(),
+    months:{},
     budget:{income:0,debt:0,savings:0},
     monthlyIncomeBudget:{},
     envelopes:[], envelopeBudgets:{}, envelopeSpending:{},
     debtBudgets:{}, debtSpending:{}, savingsBudgets:{}, savingsSpending:{},
     debtOrder:'avalanche', archives:(state.archives||{})
   };
+  // These 9 record types carry a year column right after the type (yr, then
+  // month index, then whatever that record needs) — older backups made before
+  // multi-year support won't have a real year in r[1], so fall back to this
+  // year for those.
+  const yk = (r)=>{ const y=Number(r[1]); return (y && String(y).length===4 ? y : currentYear)+'-'+Number(r[2]); };
   rows.forEach(r=>{
     const t=r[0];
     if(t==='type') return;
@@ -1615,44 +1675,46 @@ function csvToState(text){
       fresh.envelopes.push({id:r[1]||uid(), name:r[2]||'', isCustom:r[3]==='true'});
     }
     else if(t==='incomebudget'){
-      fresh.monthlyIncomeBudget[Number(r[1])] = Number(r[2])||0;
+      fresh.monthlyIncomeBudget[yk(r)] = Number(r[3])||0;
     }
     else if(t==='envelopebudget'){
-      const mi=Number(r[1]); const envId=r[2];
-      if(!fresh.envelopeBudgets[mi]) fresh.envelopeBudgets[mi]={};
-      fresh.envelopeBudgets[mi][envId] = Number(r[3])||0;
+      const k=yk(r); const envId=r[3];
+      if(!fresh.envelopeBudgets[k]) fresh.envelopeBudgets[k]={};
+      fresh.envelopeBudgets[k][envId] = Number(r[4])||0;
     }
     else if(t==='debtbudget'){
-      const mi=Number(r[1]); const debtId=r[2];
-      if(!fresh.debtBudgets[mi]) fresh.debtBudgets[mi]={};
-      fresh.debtBudgets[mi][debtId] = Number(r[3])||0;
+      const k=yk(r); const debtId=r[3];
+      if(!fresh.debtBudgets[k]) fresh.debtBudgets[k]={};
+      fresh.debtBudgets[k][debtId] = Number(r[4])||0;
     }
     else if(t==='savingsbudget'){
-      const mi=Number(r[1]); const fundId=r[2];
-      if(!fresh.savingsBudgets[mi]) fresh.savingsBudgets[mi]={};
-      fresh.savingsBudgets[mi][fundId] = Number(r[3])||0;
+      const k=yk(r); const fundId=r[3];
+      if(!fresh.savingsBudgets[k]) fresh.savingsBudgets[k]={};
+      fresh.savingsBudgets[k][fundId] = Number(r[4])||0;
     }
     else if(t==='monthitem'){
-      const mi=Number(r[1]); const cat=r[2];
-      if(fresh.months[mi] && fresh.months[mi][cat]) fresh.months[mi][cat].push({id:r[3]||uid(), name:r[4]||'', amount:Number(r[5])||0, sourceEventId:r[6]||undefined});
+      const k=yk(r); const cat=r[3];
+      if(!fresh.months[k]) fresh.months[k]=emptyMonth();
+      if(fresh.months[k][cat]) fresh.months[k][cat].push({id:r[4]||uid(), name:r[5]||'', amount:Number(r[6])||0, sourceEventId:r[7]||undefined});
     } else if(t==='monthnotes'){
-      const mi=Number(r[1]);
-      if(fresh.months[mi]) fresh.months[mi].notes = r[2]||'';
+      const k=yk(r);
+      if(!fresh.months[k]) fresh.months[k]=emptyMonth();
+      fresh.months[k].notes = r[3]||'';
     } else if(t==='envelopespend'){
-      const mi=Number(r[1]); const envId=r[2];
-      if(!fresh.envelopeSpending[mi]) fresh.envelopeSpending[mi]={};
-      if(!fresh.envelopeSpending[mi][envId]) fresh.envelopeSpending[mi][envId]=[];
-      fresh.envelopeSpending[mi][envId].push({id:r[3]||uid(), name:r[4]||'', amount:Number(r[5])||0, date:r[6]||''});
+      const k=yk(r); const envId=r[3];
+      if(!fresh.envelopeSpending[k]) fresh.envelopeSpending[k]={};
+      if(!fresh.envelopeSpending[k][envId]) fresh.envelopeSpending[k][envId]=[];
+      fresh.envelopeSpending[k][envId].push({id:r[4]||uid(), name:r[5]||'', amount:Number(r[6])||0, date:r[7]||''});
     } else if(t==='debtspend'){
-      const mi=Number(r[1]); const debtId=r[2];
-      if(!fresh.debtSpending[mi]) fresh.debtSpending[mi]={};
-      if(!fresh.debtSpending[mi][debtId]) fresh.debtSpending[mi][debtId]=[];
-      fresh.debtSpending[mi][debtId].push({id:r[3]||uid(), name:r[4]||'', amount:Number(r[5])||0, date:r[6]||''});
+      const k=yk(r); const debtId=r[3];
+      if(!fresh.debtSpending[k]) fresh.debtSpending[k]={};
+      if(!fresh.debtSpending[k][debtId]) fresh.debtSpending[k][debtId]=[];
+      fresh.debtSpending[k][debtId].push({id:r[4]||uid(), name:r[5]||'', amount:Number(r[6])||0, date:r[7]||''});
     } else if(t==='savingsspend'){
-      const mi=Number(r[1]); const fundId=r[2];
-      if(!fresh.savingsSpending[mi]) fresh.savingsSpending[mi]={};
-      if(!fresh.savingsSpending[mi][fundId]) fresh.savingsSpending[mi][fundId]=[];
-      fresh.savingsSpending[mi][fundId].push({id:r[3]||uid(), name:r[4]||'', amount:Number(r[5])||0, date:r[6]||''});
+      const k=yk(r); const fundId=r[3];
+      if(!fresh.savingsSpending[k]) fresh.savingsSpending[k]={};
+      if(!fresh.savingsSpending[k][fundId]) fresh.savingsSpending[k][fundId]=[];
+      fresh.savingsSpending[k][fundId].push({id:r[4]||uid(), name:r[5]||'', amount:Number(r[6])||0, date:r[7]||''});
     } else if(t==='event'){
       const key=r[1];
       if(!fresh.events[key]) fresh.events[key]=[];
@@ -1709,7 +1771,7 @@ document.getElementById('importFileInput').addEventListener('change',(e)=>{
         state = Object.assign({
           settings:{name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0},
           funds:[], debts:[], goals:[], events:{},
-          months:(()=>{ const m={}; for(let i=0;i<12;i++) m[i]=emptyMonth(); return m; })(),
+          months:{},
           budget:{income:0,debt:0,savings:0},
           monthlyIncomeBudget:{},
           envelopes:[], envelopeBudgets:{}, envelopeSpending:{},
@@ -1717,10 +1779,15 @@ document.getElementById('importFileInput').addEventListener('change',(e)=>{
           debtOrder:'avalanche', archives:(state.archives||{})
         }, parsed);
         state.settings = Object.assign({name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0}, parsed.settings||{});
-        for(let i=0;i<12;i++){
-          const m = (parsed.months && parsed.months[i]) || {};
-          state.months[i] = { income:m.income||[], bills:m.bills||[], expenses:m.expenses||[], debt:m.debt||[], savings:m.savings||[], notes:m.notes||'' };
-        }
+        // Normalize every month's shape (old JSON backups may be missing
+        // fields), whatever key format they're currently under.
+        Object.keys(state.months).forEach(k=>{
+          const m = state.months[k] || {};
+          state.months[k] = { income:m.income||[], bills:m.bills||[], expenses:m.expenses||[], debt:m.debt||[], savings:m.savings||[], notes:m.notes||'' };
+        });
+        migrateMonthKeysToYear(); // old plain "0".."11" backups → this year's keys; CSV/new backups are already year-keyed and pass through untouched
+        currentYear = Math.min(...knownDataYears()); // land on the earliest year a restored backup actually has data for
+        for(let i=0;i<12;i++) getMonthData(i); // make sure all 12 months exist for whichever year we land on
         state.budget = Object.assign({income:0,debt:0,savings:0}, parsed.budget||{});
         state.envelopes = (parsed.envelopes && parsed.envelopes.length) ? parsed.envelopes : makeDefaultEnvelopes();
         state.envelopeBudgets = parsed.envelopeBudgets || {};
@@ -1755,7 +1822,7 @@ document.getElementById('resetDataBtn').addEventListener('click',()=>{
     m.querySelector('#cancelReset').addEventListener('click',closeModal);
     m.querySelector('#confirmReset').addEventListener('click', async ()=>{
       state={settings:{name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0},funds:[],debts:[],goals:[],events:{},months:{},budget:{income:0,debt:0,savings:0},monthlyIncomeBudget:{},envelopes:makeDefaultEnvelopes(),envelopeBudgets:{},envelopeSpending:{},debtBudgets:{},debtSpending:{},savingsBudgets:{},savingsSpending:{},debtOrder:'avalanche',archives:state.archives||{}};
-      for(let i=0;i<12;i++) state.months[i]=emptyMonth();
+      for(let i=0;i<12;i++) state.months[pk(i)]=emptyMonth();
       applyTheme(); updateBrand(); saveState();
       closeModal(); goTo(currentPanel);
     });
@@ -1850,7 +1917,7 @@ function renderToday(){
   document.getElementById('heroDebt').innerHTML = fmtMoney(totalDebt);
   document.getElementById('heroDebtCaption').textContent = state.debts.length ? `across ${state.debts.length} debt${state.debts.length>1?'s':''}` : 'Add a debt to track your payoff.';
 
-  const mIncome = getStartingBalance() + sumCat(state.months[currentMonthIndex].income);
+  const mIncome = getEffectiveIncomeForMonth(currentYear, currentMonthIndex);
   const mExpense = envelopeTotals(currentMonthIndex).actual+debtItemTotals(currentMonthIndex).actual+savingsItemTotals(currentMonthIndex).actual;
   const minDebtPayments = state.debts.reduce((s,d)=>s+Number(d.minPayment||0),0);
   const goalsInProgress = state.goals.filter(g=>g.status==='inprogress').length;
@@ -1883,10 +1950,10 @@ function renderToday(){
       </div>`).join('');
   }
 
-  document.getElementById('todayMonthNotes').value = state.months[currentMonthIndex].notes||'';
+  document.getElementById('todayMonthNotes').value = getMonthData(currentMonthIndex).notes||'';
 }
 document.getElementById('todayMonthNotes').addEventListener('input',(e)=>{
-  state.months[currentMonthIndex].notes = e.target.value; saveState();
+  getMonthData(currentMonthIndex).notes = e.target.value; saveState();
 });
 
 /* ============ CALENDAR ============ */
@@ -1944,50 +2011,58 @@ function addMonthEntryForEvent(ev, key){
     const envId = ev.flowTo.slice(4);
     if(!state.envelopes.some(e=>e.id===envId)) return;
     ensureEnvelopeMonth(mi);
-    state.envelopeSpending[mi][envId].push({id:uid(), name:ev.label, amount:ev.amount, sourceEventId:ev.id});
+    state.envelopeSpending[pk(mi)][envId].push({id:uid(), name:ev.label, amount:ev.amount, sourceEventId:ev.id});
     return;
   }
   if(ev.flowTo.startsWith('debt:')){
     const debtId = ev.flowTo.slice(5);
     if(!state.debts.some(d=>d.id===debtId)) return;
     ensureDebtMonth(mi);
-    state.debtSpending[mi][debtId].push({id:uid(), name:ev.label, amount:ev.amount, sourceEventId:ev.id});
+    state.debtSpending[pk(mi)][debtId].push({id:uid(), name:ev.label, amount:ev.amount, sourceEventId:ev.id});
     return;
   }
   if(ev.flowTo.startsWith('savings:')){
     const fundId = ev.flowTo.slice(8);
     if(!state.funds.some(f=>f.id===fundId)) return;
     ensureSavingsMonth(mi);
-    state.savingsSpending[mi][fundId].push({id:uid(), name:ev.label, amount:ev.amount, sourceEventId:ev.id});
+    state.savingsSpending[pk(mi)][fundId].push({id:uid(), name:ev.label, amount:ev.amount, sourceEventId:ev.id});
     return;
   }
   if(!FLOW_BUCKETS[ev.flowTo]) return;
-  state.months[mi][FLOW_BUCKETS[ev.flowTo]].push({id:uid(), name:ev.label, amount:ev.amount, sourceEventId:ev.id});
+  getMonthData(mi)[FLOW_BUCKETS[ev.flowTo]].push({id:uid(), name:ev.label, amount:ev.amount, sourceEventId:ev.id});
 }
 function removeMonthEntriesForEvent(eventId){
-  for(let i=0;i<12;i++){
-    ['income','bills','expenses','debt','savings'].forEach(cat=>{
-      state.months[i][cat] = state.months[i][cat].filter(x=>x.sourceEventId!==eventId);
-    });
-    if(state.envelopeSpending[i]){
-      Object.keys(state.envelopeSpending[i]).forEach(id=>{
-        state.envelopeSpending[i][id] = state.envelopeSpending[i][id].filter(x=>x.sourceEventId!==eventId);
+  // A recurring series can span more than one year, so clean up every year
+  // that currently has any data at all, not just the one you're viewing.
+  const savedYear = currentYear;
+  knownDataYears().forEach(yr=>{
+    currentYear = yr;
+    for(let i=0;i<12;i++){
+      ['income','bills','expenses','debt','savings'].forEach(cat=>{
+        getMonthData(i)[cat] = getMonthData(i)[cat].filter(x=>x.sourceEventId!==eventId);
       });
+      const k = pk(i);
+      if(state.envelopeSpending[k]){
+        Object.keys(state.envelopeSpending[k]).forEach(id=>{
+          state.envelopeSpending[k][id] = state.envelopeSpending[k][id].filter(x=>x.sourceEventId!==eventId);
+        });
+      }
+      // Debt/savings need their balance effect reversed, not just the log entry removed.
+      if(state.debtSpending[k]){
+        Object.keys(state.debtSpending[k]).forEach(debtId=>{
+          state.debtSpending[k][debtId].filter(x=>x.sourceEventId===eventId).forEach(x=>reverseDebtPayment(debtId, x.amount));
+          state.debtSpending[k][debtId] = state.debtSpending[k][debtId].filter(x=>x.sourceEventId!==eventId);
+        });
+      }
+      if(state.savingsSpending[k]){
+        Object.keys(state.savingsSpending[k]).forEach(fundId=>{
+          state.savingsSpending[k][fundId].filter(x=>x.sourceEventId===eventId).forEach(x=>reverseSavingsContribution(fundId, x.amount));
+          state.savingsSpending[k][fundId] = state.savingsSpending[k][fundId].filter(x=>x.sourceEventId!==eventId);
+        });
+      }
     }
-    // Debt/savings need their balance effect reversed, not just the log entry removed.
-    if(state.debtSpending[i]){
-      Object.keys(state.debtSpending[i]).forEach(debtId=>{
-        state.debtSpending[i][debtId].filter(x=>x.sourceEventId===eventId).forEach(x=>reverseDebtPayment(debtId, x.amount));
-        state.debtSpending[i][debtId] = state.debtSpending[i][debtId].filter(x=>x.sourceEventId!==eventId);
-      });
-    }
-    if(state.savingsSpending[i]){
-      Object.keys(state.savingsSpending[i]).forEach(fundId=>{
-        state.savingsSpending[i][fundId].filter(x=>x.sourceEventId===eventId).forEach(x=>reverseSavingsContribution(fundId, x.amount));
-        state.savingsSpending[i][fundId] = state.savingsSpending[i][fundId].filter(x=>x.sourceEventId!==eventId);
-      });
-    }
-  }
+  });
+  currentYear = savedYear;
 }
 /* Build the set of date keys for a recurring event, starting from the chosen
    date and running one year forward. */
@@ -2272,9 +2347,15 @@ function openFundModal(id){
 }
 function openAddMoneyModal(id){
   const fund=state.funds.find(f=>f.id===id); if(!fund) return;
+  const now = new Date();
+  const defaultDate = `${now.getFullYear()}-${pad2(now.getMonth()+1)}-${pad2(now.getDate())}`;
   openModal(`
     <h3>Add money to ${escapeHtml(fund.name)}</h3>
-    <div class="field"><label>Amount</label><input id="addAmt" type="number" min="0" step="0.01" placeholder="0.00"></div>
+    <div class="field"><label>Name (optional)</label><input id="addName" placeholder="e.g. Extra transfer"></div>
+    <div class="field-row">
+      <div class="field"><label>Amount</label><input id="addAmt" type="number" min="0" step="0.01" placeholder="0.00"></div>
+      <div class="field"><label>Date</label><input id="addDate" type="date" value="${defaultDate}"></div>
+    </div>
     <div class="modal-actions">
       <button class="btn ghost" id="cancelAdd">Cancel</button>
       <button class="btn" id="confirmAdd">Add</button>
@@ -2283,7 +2364,15 @@ function openAddMoneyModal(id){
     m.querySelector('#cancelAdd').addEventListener('click',closeModal);
     m.querySelector('#confirmAdd').addEventListener('click',()=>{
       const amt=parseFloat(m.querySelector('#addAmt').value)||0;
-      fund.saved = Number(fund.saved||0)+amt;
+      const name=m.querySelector('#addName').value.trim() || fund.name;
+      const date=m.querySelector('#addDate').value || defaultDate;
+      // Log this as a real, editable contribution — same mechanism as every
+      // other savings entry — instead of silently bumping the total with no
+      // record anyone could later find, edit, or undo.
+      const mi = new Date(date+'T00:00:00').getMonth();
+      ensureSavingsMonth(mi);
+      state.savingsSpending[pk(mi)][fund.id].push({id:uid(), name, amount:amt, date});
+      applySavingsContribution(fund.id, amt);
       saveState(); closeModal(); renderSavings(); renderToday();
     });
   });
@@ -2460,7 +2549,27 @@ function openGoalModal(id){
 }
 
 /* ============ MONTHS ============ */
+function changeYear(newYear){
+  currentYear = newYear;
+  if(currentPanel==='months') renderMonths();
+  if(currentPanel==='home') renderHome();
+  if(currentPanel==='yearly') renderYearly();
+}
+function renderYearSwitcher(elId){
+  const el = document.getElementById(elId);
+  if(!el) return;
+  const isOnlyYear = knownDataYears().length<=1;
+  el.innerHTML = `
+    <button class="yr-btn" id="${elId}Prev" title="Previous year">&larr;</button>
+    <span class="yr-label">${currentYear}</span>
+    <button class="yr-btn" id="${elId}Next" title="Next year">&rarr;</button>
+    ${isOnlyYear?'<span class="yr-note">Nothing in other years yet</span>':''}
+  `;
+  document.getElementById(elId+'Prev').addEventListener('click', ()=>changeYear(currentYear-1));
+  document.getElementById(elId+'Next').addEventListener('click', ()=>changeYear(currentYear+1));
+}
 function renderMonthPills(){
+  renderYearSwitcher('monthYearSwitcher');
   const el=document.getElementById('monthPills');
   el.innerHTML = MONTH_NAMES.map((m,i)=>`<button class="month-pill${i===currentMonthIndex?' active':''}" data-m="${i}">${m.slice(0,3)}</button>`).join('');
   el.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ currentMonthIndex=Number(b.dataset.m); renderMonths(); }));
@@ -2473,7 +2582,7 @@ const CATEGORY_EMPTY_MSG = {
   income:'No income logged for this month.'
 };
 function renderMonthCategoryList(cat){
-  const data=state.months[currentMonthIndex];
+  const data=getMonthData(currentMonthIndex);
   const meta=CATEGORY_META[cat];
   const el=document.getElementById(meta.listId);
   const items=data[cat];
@@ -2519,8 +2628,51 @@ function renderItemGroupSummary(elId, totals, calmLabel, warmLabel){
   }
 }
 function getStartingBalance(){ return Number(state.settings.startingBalance)||0; }
+/* A single sortable integer for "year and month", so we never have to
+   string-compare period keys like "2026-9" vs "2026-10" (which sorts wrong
+   lexically — "10" < "9" as strings). */
+function monthSeq(year, mi){ return year*12+mi; }
+/* The very first month this planner was ever used — captured once, the
+   first time the app loads, and never changed again. Starting balance only
+   ever applies here; every month after it only carries forward whatever's
+   left from the month before. */
+function getFirstMonthSeq(){
+  if(state.settings.firstMonthSeq==null){
+    state.settings.firstMonthSeq = monthSeq(currentYear, new Date().getMonth());
+  }
+  return state.settings.firstMonthSeq;
+}
+/* Actual logged income and actual total spending for one specific month,
+   regardless of which year is currently selected on screen. */
+function getMonthIncomeAndSpending(year, mi){
+  const savedYear = currentYear;
+  currentYear = year;
+  const income = sumCat(getMonthData(mi).income);
+  const spending = envelopeTotals(mi).actual + debtItemTotals(mi).actual + savingsItemTotals(mi).actual;
+  currentYear = savedYear;
+  return {income, spending};
+}
+/* Whatever was left over (or short) at the end of the previous month,
+   carried into this one. Nothing rolls into the very first month — that's
+   what the one-time starting balance is for instead. */
+function getRolloverIntoMonth(year, mi){
+  if(monthSeq(year,mi) <= getFirstMonthSeq()) return 0;
+  const py = mi===0 ? year-1 : year;
+  const pmi = mi===0 ? 11 : mi-1;
+  const prevEffectiveIncome = getEffectiveIncomeForMonth(py, pmi);
+  const {spending:prevSpending} = getMonthIncomeAndSpending(py, pmi);
+  return prevEffectiveIncome - prevSpending;
+}
+/* What a month actually has available to spend: its own logged income, plus
+   whatever rolled in from the month before, plus the starting balance — but
+   only if this happens to be the very first month ever used. */
+function getEffectiveIncomeForMonth(year, mi){
+  const startBal = (monthSeq(year,mi)===getFirstMonthSeq()) ? getStartingBalance() : 0;
+  const {income} = getMonthIncomeAndSpending(year, mi);
+  return startBal + income + getRolloverIntoMonth(year, mi);
+}
 function renderMonthStatsOnly(){
-  const incomeActual = getStartingBalance() + sumCat(state.months[currentMonthIndex].income);
+  const incomeActual = getEffectiveIncomeForMonth(currentYear, currentMonthIndex);
   const env = envelopeTotals(currentMonthIndex);
   const debtTot = debtItemTotals(currentMonthIndex);
   const savingsTot = savingsItemTotals(currentMonthIndex);
@@ -2536,7 +2688,7 @@ function renderMonthStatsOnly(){
 function renderMonths(){
   renderMonthPills();
   document.getElementById('monthTitle').textContent=MONTH_NAMES[currentMonthIndex];
-  const data=state.months[currentMonthIndex];
+  const data=getMonthData(currentMonthIndex);
   renderMonthStatsOnly();
   document.getElementById('budgetIncome').value = getIncomeBudget(currentMonthIndex)||'';
   document.getElementById('moneyInMonthLabel').textContent = MONTH_NAMES[currentMonthIndex];
@@ -2570,7 +2722,7 @@ document.getElementById('mtAddIncomeBtn').addEventListener('click',()=>{
   const dateStr = (currentMonthIndex===now.getMonth())
     ? `${now.getFullYear()}-${pad2(currentMonthIndex+1)}-${pad2(now.getDate())}`
     : `${now.getFullYear()}-${pad2(currentMonthIndex+1)}-01`;
-  state.months[currentMonthIndex].income.push({id:uid(), name, amount, date:dateStr});
+  getMonthData(currentMonthIndex).income.push({id:uid(), name, amount, date:dateStr});
   saveState();
   nameEl.value=''; amtEl.value='';
   renderMonths(); renderToday();
@@ -2588,13 +2740,13 @@ document.getElementById('mtAddSpendBtn').addEventListener('click',()=>{
     ? `${now.getFullYear()}-${pad2(currentMonthIndex+1)}-${pad2(now.getDate())}`
     : `${now.getFullYear()}-${pad2(currentMonthIndex+1)}-01`;
   ensureEnvelopeMonth(currentMonthIndex);
-  state.envelopeSpending[currentMonthIndex][envId].push({id:uid(), name, amount, date:dateStr});
+  state.envelopeSpending[pk(currentMonthIndex)][envId].push({id:uid(), name, amount, date:dateStr});
   saveState();
   nameEl.value=''; amtEl.value='';
   renderMonths(); renderToday();
 });
 document.getElementById('monthNotes').addEventListener('input',(e)=>{
-  state.months[currentMonthIndex].notes=e.target.value; saveState();
+  getMonthData(currentMonthIndex).notes=e.target.value; saveState();
 });
 document.getElementById('addIncomeBtn').addEventListener('click',()=>openLineModal('income'));
 const LINE_MODAL_META = {
@@ -2629,10 +2781,10 @@ function openLineModal(kind, existing){
       const mi = new Date(dateStr+'T00:00:00').getMonth();
       if(isEdit){
         // Remove the old entry (possibly from a different month if the date changed)
-        state.months[currentMonthIndex][kind] = state.months[currentMonthIndex][kind].filter(x=>x.id!==existing.id);
-        state.months[mi][kind].push({id:existing.id, name, amount, date:dateStr});
+        getMonthData(currentMonthIndex)[kind] = getMonthData(currentMonthIndex)[kind].filter(x=>x.id!==existing.id);
+        getMonthData(mi)[kind].push({id:existing.id, name, amount, date:dateStr});
       } else {
-        state.months[mi][kind].push({id:uid(), name, amount, date:dateStr});
+        getMonthData(mi)[kind].push({id:uid(), name, amount, date:dateStr});
       }
       saveState(); closeModal();
       currentMonthIndex = mi;
@@ -2710,14 +2862,14 @@ function openQuickAddModal(){
         const env = state.envelopes.find(e=>e.id===envId);
         item.name = name || (env ? env.name : 'Envelope spend');
         ensureEnvelopeMonth(mi);
-        state.envelopeSpending[mi][envId].push(item);
+        state.envelopeSpending[pk(mi)][envId].push(item);
       } else if(cat==='debt'){
         const debtId = m.querySelector('#qaDebt').value;
         if(!debtId) return;
         const debt = state.debts.find(d=>d.id===debtId);
         item.name = name || (debt ? debt.name : 'Debt payment');
         ensureDebtMonth(mi);
-        state.debtSpending[mi][debtId].push(item);
+        state.debtSpending[pk(mi)][debtId].push(item);
         applyDebtPayment(debtId, amount);
       } else if(cat==='savings'){
         const fundId = m.querySelector('#qaFund').value;
@@ -2725,11 +2877,11 @@ function openQuickAddModal(){
         const fund = state.funds.find(f=>f.id===fundId);
         item.name = name || (fund ? fund.name : 'Savings contribution');
         ensureSavingsMonth(mi);
-        state.savingsSpending[mi][fundId].push(item);
+        state.savingsSpending[pk(mi)][fundId].push(item);
         applySavingsContribution(fundId, amount);
       } else {
         item.name = name || defaultName;
-        state.months[mi][cat].push(item);
+        getMonthData(mi)[cat].push(item);
       }
       saveState(); closeModal();
       currentMonthIndex = mi;
@@ -2741,10 +2893,11 @@ document.getElementById('quickAddBtn').addEventListener('click', openQuickAddMod
 
 /* ============ YEARLY REVIEW ============ */
 function renderYearly(){
+  renderYearSwitcher('yearlyYearSwitcher');
   let totalIncome=0, totalExpense=0;
   const perMonth=[];
   for(let i=0;i<12;i++){
-    const inc = sumCat(state.months[i].income);
+    const inc = sumCat(getMonthData(i).income);
     const exp = envelopeTotals(i).actual+debtItemTotals(i).actual+savingsItemTotals(i).actual;
     totalIncome+=inc; totalExpense+=exp;
     perMonth.push({i, inc, exp, left: inc-exp});
@@ -3009,19 +3162,19 @@ function getAllTransactionsForMonth(mi){
   const rows=[];
   ensureEnvelopeMonth(mi);
   state.envelopes.forEach(env=>{
-    (state.envelopeSpending[mi][env.id]||[]).forEach(it=>{
+    (state.envelopeSpending[pk(mi)][env.id]||[]).forEach(it=>{
       rows.push({date:it.date, tag:env.name, catLabel:'Envelope', name:it.name, amount:Number(it.amount||0), color:'var(--warning)'});
     });
   });
   ensureDebtMonth(mi);
   state.debts.forEach(d=>{
-    (state.debtSpending[mi][d.id]||[]).forEach(it=>{
+    (state.debtSpending[pk(mi)][d.id]||[]).forEach(it=>{
       rows.push({date:it.date, tag:d.name, catLabel:'Debt', name:it.name, amount:Number(it.amount||0), color:'var(--primary-strong)'});
     });
   });
   ensureSavingsMonth(mi);
   state.funds.forEach(f=>{
-    (state.savingsSpending[mi][f.id]||[]).forEach(it=>{
+    (state.savingsSpending[pk(mi)][f.id]||[]).forEach(it=>{
       rows.push({date:it.date, tag:f.name, catLabel:'Savings', name:it.name, amount:Number(it.amount||0), color:'var(--info)'});
     });
   });
@@ -3050,7 +3203,7 @@ function renderTranslog(){
 
 /* ============ BUDGET PANEL ============ */
 function categoryTotalsForMonth(mi){
-  const data=state.months[mi];
+  const data=getMonthData(mi);
   return {
     income: sumCat(data.income),
     bills: sumCat(data.bills),
@@ -3063,7 +3216,7 @@ function getBudgetCategories(mi){
   const env = envelopeTotals(mi);
   const debtTot = debtItemTotals(mi);
   const savingsTot = savingsItemTotals(mi);
-  const incomeActual = sumCat(state.months[mi].income);
+  const incomeActual = sumCat(getMonthData(mi).income);
   return [
     {label:'Income', planned:getIncomeBudget(mi), actual:incomeActual, color:'var(--success)'},
     {label:'Envelopes', planned:env.planned, actual:env.actual, color:'var(--warning)'},
@@ -3100,13 +3253,13 @@ function getEnvelopeDistribution(mi){
 }
 function getSubcategorySegments(mi){
   const items=[];
-  const monthData = state.months[mi];
+  const monthData = getMonthData(mi);
   ['bills','expenses','debt','savings'].forEach(cat=>{
     monthData[cat].forEach(it=> items.push({name:(it.name||'Untitled').trim(), amount:Number(it.amount||0)}));
   });
   ensureEnvelopeMonth(mi);
   state.envelopes.forEach(env=>{
-    (state.envelopeSpending[mi][env.id]||[]).forEach(it=> items.push({name:(it.name||'Untitled').trim(), amount:Number(it.amount||0)}));
+    (state.envelopeSpending[pk(mi)][env.id]||[]).forEach(it=> items.push({name:(it.name||'Untitled').trim(), amount:Number(it.amount||0)}));
   });
   const map={};
   items.forEach(it=>{
@@ -3124,13 +3277,14 @@ function getSubcategorySegments(mi){
 
 /* ============ HOME ============ */
 function renderHomeMonthPills(){
+  renderYearSwitcher('homeYearSwitcher');
   const el=document.getElementById('homeMonthPills');
   el.innerHTML = MONTH_NAMES.map((m,i)=>`<button class="month-pill${i===currentMonthIndex?' active':''}" data-m="${i}">${m.slice(0,3)}</button>`).join('');
   el.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ currentMonthIndex=Number(b.dataset.m); renderHome(); }));
 }
 function renderHome(){
   renderHomeMonthPills();
-  const incomeActual = getStartingBalance() + sumCat(state.months[currentMonthIndex].income);
+  const incomeActual = getEffectiveIncomeForMonth(currentYear, currentMonthIndex);
   const env = envelopeTotals(currentMonthIndex);
   const debtTot = debtItemTotals(currentMonthIndex);
   const savingsTot = savingsItemTotals(currentMonthIndex);
@@ -3149,10 +3303,10 @@ function renderHome(){
     {detailSubtitle:"Share of all envelope spending for "+MONTH_NAMES[currentMonthIndex]+"."});
   renderLeftToSpendChart('homeLeftToSpend', incomeActual, getSpendingBreakdown(currentMonthIndex));
 
-  document.getElementById('homeMonthNotes').value = state.months[currentMonthIndex].notes||'';
+  document.getElementById('homeMonthNotes').value = getMonthData(currentMonthIndex).notes||'';
 }
 document.getElementById('homeMonthNotes').addEventListener('input',(e)=>{
-  state.months[currentMonthIndex].notes = e.target.value; saveState();
+  getMonthData(currentMonthIndex).notes = e.target.value; saveState();
 });
 
 
@@ -3166,7 +3320,7 @@ function budgetCardsHtml(mi, items, budgetStore, spendStore, opts){
   return items.map(it=>{
     const planned = getItemBudget(budgetStore, mi, it.id);
     const actual = itemActual(spendStore, mi, it.id);
-    const spendItems = (spendStore[mi] && spendStore[mi][it.id]) || [];
+    const spendItems = (spendStore[pk(mi)] && spendStore[pk(mi)][it.id]) || [];
     const pct = planned>0 ? clamp(Math.round((actual/planned)*100),0,999) : (actual>0?100:0);
     const remaining = planned-actual;
     const itemsHtml = spendItems.length ? spendItems.map(x=>{
@@ -3181,12 +3335,14 @@ function budgetCardsHtml(mi, items, budgetStore, spendStore, opts){
     }).join('') : '<div style="font-size:12.5px;color:var(--ink-soft);padding:6px 0;">Nothing logged yet.</div>';
 
     const deleteBtn = opts.allowDelete ? `<button class="icon-btn" data-cb-del="${it.id}">Delete</button>` : '';
+    const renameBtn = opts.allowRename ? `<button class="icon-btn" data-cb-rename="${it.id}">Rename</button>` : '';
     return `
     <div class="fund-card" style="margin-bottom:12px;">
       <div class="fund-top">
         <div class="name">${escapeHtml(it.name)}</div>
         <div class="card-actions">
           <button class="icon-btn" data-cb-add="${it.id}">+ Add ${opts.addLabel||'spend'}</button>
+          ${renameBtn}
           ${deleteBtn}
         </div>
       </div>
@@ -3249,15 +3405,18 @@ function wireBudgetCards(el, mi, items, budgetStore, spendStore, onListChange, o
   el.querySelectorAll('[data-cb-del]').forEach(b=>b.addEventListener('click',()=>{
     if(opts.onDelete) opts.onDelete(b.dataset.cbDel, onListChange);
   }));
+  el.querySelectorAll('[data-cb-rename]').forEach(b=>b.addEventListener('click',()=>{
+    if(opts.onRename) opts.onRename(b.dataset.cbRename, onListChange);
+  }));
   el.querySelectorAll('[data-cb-item-edit]').forEach(b=>b.addEventListener('click',()=>{
     const [itemId, spendId] = b.dataset.cbItemEdit.split('|');
-    const existing = spendStore[mi] && spendStore[mi][itemId] && spendStore[mi][itemId].find(x=>x.id===spendId);
+    const existing = spendStore[pk(mi)] && spendStore[pk(mi)][itemId] && spendStore[pk(mi)][itemId].find(x=>x.id===spendId);
     if(existing) openItemSpendModal(itemId, items, mi, spendStore, onListChange, opts, existing);
   }));
   el.querySelectorAll('[data-cb-item-del]').forEach(b=>b.addEventListener('click',()=>{
     const [itemId, spendId] = b.dataset.cbItemDel.split('|');
-    const removed = spendStore[mi] && spendStore[mi][itemId] && spendStore[mi][itemId].find(x=>x.id===spendId);
-    if(spendStore[mi] && spendStore[mi][itemId]) spendStore[mi][itemId] = spendStore[mi][itemId].filter(x=>x.id!==spendId);
+    const removed = spendStore[pk(mi)] && spendStore[pk(mi)][itemId] && spendStore[pk(mi)][itemId].find(x=>x.id===spendId);
+    if(spendStore[pk(mi)] && spendStore[pk(mi)][itemId]) spendStore[pk(mi)][itemId] = spendStore[pk(mi)][itemId].filter(x=>x.id!==spendId);
     if(removed && opts.onReverse) opts.onReverse(itemId, removed.amount);
     saveState(); onListChange(true);
   }));
@@ -3285,16 +3444,16 @@ function openItemSpendModal(itemId, items, mi, spendStore, onChange, opts, exist
       const name = m.querySelector('#cbSpendName').value.trim() || (item ? item.name : (opts.addLabel||'Spend'));
       const amount = parseFloat(m.querySelector('#cbSpendAmt').value)||0;
       const date = m.querySelector('#cbSpendDate').value || defaultDate;
-      if(!spendStore[mi]) spendStore[mi]={};
-      if(!spendStore[mi][itemId]) spendStore[mi][itemId]=[];
+      if(!spendStore[pk(mi)]) spendStore[pk(mi)]={};
+      if(!spendStore[pk(mi)][itemId]) spendStore[pk(mi)][itemId]=[];
       if(isEdit){
-        const idx = spendStore[mi][itemId].findIndex(x=>x.id===existing.id);
-        if(idx>-1) spendStore[mi][itemId][idx] = {id:existing.id, name, amount, date};
+        const idx = spendStore[pk(mi)][itemId].findIndex(x=>x.id===existing.id);
+        if(idx>-1) spendStore[pk(mi)][itemId][idx] = {id:existing.id, name, amount, date};
         // Undo the old amount's effect on the linked balance, then apply the new one.
         if(opts.onReverse) opts.onReverse(itemId, existing.amount);
         if(opts.onApply) opts.onApply(itemId, amount);
       } else {
-        spendStore[mi][itemId].push({id:uid(), name, amount, date});
+        spendStore[pk(mi)][itemId].push({id:uid(), name, amount, date});
         if(opts.onApply) opts.onApply(itemId, amount);
       }
       saveState(); closeModal(); onChange(true);
@@ -3305,11 +3464,31 @@ function openItemSpendModal(itemId, items, mi, spendStore, onChange, opts, exist
 /* ---- envelope wrappers ---- */
 function envelopeCardsHtml(mi){
   return budgetCardsHtml(mi, state.envelopes, state.envelopeBudgets, state.envelopeSpending,
-    {emptyMsg:'No categories yet. Add one to start budgeting.', allowDelete:true, addLabel:'spend', namePlaceholder:"e.g. Trader Joe's run"});
+    {emptyMsg:'No categories yet. Add one to start budgeting.', allowDelete:true, allowRename:true, addLabel:'spend', namePlaceholder:"e.g. Trader Joe's run"});
 }
 function wireEnvelopeCards(el, mi, onListChange, onStats){
   wireBudgetCards(el, mi, state.envelopes, state.envelopeBudgets, state.envelopeSpending, onListChange, onStats, {
-    addLabel:'spend', namePlaceholder:"e.g. Trader Joe's run",
+    addLabel:'spend', namePlaceholder:"e.g. Trader Joe's run", allowRename:true,
+    onRename:(envId, cb)=>{
+      const env = state.envelopes.find(x=>x.id===envId);
+      if(!env) return;
+      openModal(`
+        <h3>Rename category</h3>
+        <div class="field"><label>Name</label><input id="renameEnvName" value="${escapeHtml(env.name)}"></div>
+        <div class="modal-actions">
+          <button class="btn ghost" id="cancelEnvRename">Cancel</button>
+          <button class="btn" id="confirmEnvRename">Save</button>
+        </div>
+      `,(m)=>{
+        m.querySelector('#cancelEnvRename').addEventListener('click', closeModal);
+        m.querySelector('#confirmEnvRename').addEventListener('click', ()=>{
+          const name = m.querySelector('#renameEnvName').value.trim();
+          if(!name) return;
+          env.name = name;
+          saveState(); closeModal(); cb(true);
+        });
+      });
+    },
     onDelete:(envId, cb)=>{
       const env = state.envelopes.find(x=>x.id===envId);
       openModal(`
