@@ -150,7 +150,7 @@ const isConfigured = SUPABASE_URL.indexOf('YOUR_SUPABASE_URL') === -1 && SUPABAS
    closing the browser — you stay signed in. When not trusted, it's kept in
    sessionStorage instead, which clears as soon as the tab/browser closes —
    safer on a shared or public device. */
-const TRUST_KEY = 'bloomTrustDevice';
+const TRUST_KEY = 'bloomTestTrustDevice';
 function isTrustedDevice(){
   try{ return localStorage.getItem(TRUST_KEY) !== 'false'; }catch(e){ return true; }
 }
