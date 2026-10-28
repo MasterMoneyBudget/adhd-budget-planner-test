@@ -952,7 +952,7 @@ const supabaseConfigured = SUPABASE_URL.indexOf('YOUR_SUPABASE_URL')===-1 && SUP
 
 /* Must match index.html's storage adapter exactly, so the planner reads the
    session token from wherever the login page actually wrote it. */
-const TRUST_KEY = 'bloomTrustDevice';
+const TRUST_KEY = 'bloomTestTrustDevice';
 function isTrustedDevice(){
   try{ return localStorage.getItem(TRUST_KEY) !== 'false'; }catch(e){ return true; }
 }
@@ -1025,7 +1025,7 @@ async function supabaseSaveData(value){
    3. Either way, every write is also mirrored to this browser's localStorage, so if you
       open the file directly with no sign-in at all, your entries still survive closing
       and reopening the browser on that device. */
-const LOCAL_PREFIX = 'bloomLocal_';
+const LOCAL_PREFIX = 'bloomTestLocal_';
 function hasRemoteStorage(){
   return typeof window!=='undefined' && window.storage && typeof window.storage.get==='function';
 }
