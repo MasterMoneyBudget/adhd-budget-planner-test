@@ -445,8 +445,19 @@ textarea.notes:focus, input:focus, select:focus{outline:2px solid var(--primary)
 
       <div class="card">
         <h3 style="font-size:16px;margin-bottom:4px;">Starting balance</h3>
-        <div class="sub" style="margin-bottom:12px;">Money you already have before you start tracking with this planner. This gets added on top of whatever income you log, in every month's Income total.</div>
+        <div class="sub" style="margin-bottom:12px;">Money you already have before you start tracking with this planner. This gets added once, to the very first month you ever use the planner — not to every month going forward.</div>
         <div class="field" style="max-width:220px;"><input id="startingBalanceInput" type="number" min="0" step="0.01" placeholder="0.00"></div>
+      </div>
+
+      <div class="card" style="display:flex;justify-content:space-between;align-items:center;gap:16px;">
+        <div>
+          <h3 style="font-size:16px;">Roll over leftover money</h3>
+          <div class="sub" style="margin-top:2px;">When a month ends with money unspent, carry it into the next month's Income automatically.</div>
+        </div>
+        <label class="toggle-switch">
+          <input type="checkbox" id="rolloverToggle">
+          <span class="toggle-slider"></span>
+        </label>
       </div>
 
       <div class="section-title"><h2>How each section works</h2></div>
@@ -898,7 +909,7 @@ function makeDefaultEnvelopes(){
   return DEFAULT_ENVELOPES.map(name=>({id:uid(), name, isCustom:false}));
 }
 let state = {
-  settings:{name:'', theme:'blush', customColor:null, darkMode:false, currency:'USD', startingBalance:0},
+  settings:{name:'', theme:'blush', customColor:null, darkMode:false, currency:'USD', startingBalance:0, rolloverEnabled:false},
   funds:[],
   debts:[],
   goals:[],
@@ -1154,7 +1165,7 @@ async function loadState(){
     if(res && res.value){
       const parsed = JSON.parse(res.value);
       state = Object.assign({}, state, parsed);
-      state.settings = Object.assign({name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0}, parsed.settings||{});
+      state.settings = Object.assign({name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0, rolloverEnabled:false}, parsed.settings||{});
       if(!parsed.months) state.months = state.months;
       else{
         for(let i=0;i<12;i++){
@@ -1324,6 +1335,7 @@ function renderSetup(){
   }
   sel.value = state.settings.currency||'USD';
   document.getElementById('startingBalanceInput').value = state.settings.startingBalance || '';
+  document.getElementById('rolloverToggle').checked = !!state.settings.rolloverEnabled;
   document.getElementById('guideList').innerHTML = GUIDE_ITEMS.map(g=>`
     <div class="guide-item"><div class="gt">${g.t}</div><div class="gd">${g.d}</div></div>`).join('');
 }
@@ -1334,6 +1346,11 @@ document.getElementById('currencySelect').addEventListener('change',(e)=>{
 });
 document.getElementById('startingBalanceInput').addEventListener('input',(e)=>{
   state.settings.startingBalance = parseFloat(e.target.value)||0;
+  saveState();
+  refreshAfterDataChange();
+});
+document.getElementById('rolloverToggle').addEventListener('change',(e)=>{
+  state.settings.rolloverEnabled = e.target.checked;
   saveState();
   refreshAfterDataChange();
 });
@@ -1648,7 +1665,7 @@ function parseCSV(text){
 function csvToState(text){
   const rows = parseCSV(text).filter(r=>r.length && r[0]!=='');
   const fresh = {
-    settings:{name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0},
+    settings:{name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0, rolloverEnabled:false},
     funds:[], debts:[], goals:[], events:{},
     months:{},
     budget:{income:0,debt:0,savings:0},
@@ -1769,7 +1786,7 @@ document.getElementById('importFileInput').addEventListener('change',(e)=>{
       m.querySelector('#cancelImport').addEventListener('click', closeModal);
       m.querySelector('#confirmImport').addEventListener('click', ()=>{
         state = Object.assign({
-          settings:{name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0},
+          settings:{name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0, rolloverEnabled:false},
           funds:[], debts:[], goals:[], events:{},
           months:{},
           budget:{income:0,debt:0,savings:0},
@@ -1778,7 +1795,7 @@ document.getElementById('importFileInput').addEventListener('change',(e)=>{
           debtBudgets:{}, debtSpending:{}, savingsBudgets:{}, savingsSpending:{},
           debtOrder:'avalanche', archives:(state.archives||{})
         }, parsed);
-        state.settings = Object.assign({name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0}, parsed.settings||{});
+        state.settings = Object.assign({name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0, rolloverEnabled:false}, parsed.settings||{});
         // Normalize every month's shape (old JSON backups may be missing
         // fields), whatever key format they're currently under.
         Object.keys(state.months).forEach(k=>{
@@ -1821,7 +1838,7 @@ document.getElementById('resetDataBtn').addEventListener('click',()=>{
   `, (m)=>{
     m.querySelector('#cancelReset').addEventListener('click',closeModal);
     m.querySelector('#confirmReset').addEventListener('click', async ()=>{
-      state={settings:{name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0},funds:[],debts:[],goals:[],events:{},months:{},budget:{income:0,debt:0,savings:0},monthlyIncomeBudget:{},envelopes:makeDefaultEnvelopes(),envelopeBudgets:{},envelopeSpending:{},debtBudgets:{},debtSpending:{},savingsBudgets:{},savingsSpending:{},debtOrder:'avalanche',archives:state.archives||{}};
+      state={settings:{name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0, rolloverEnabled:false},funds:[],debts:[],goals:[],events:{},months:{},budget:{income:0,debt:0,savings:0},monthlyIncomeBudget:{},envelopes:makeDefaultEnvelopes(),envelopeBudgets:{},envelopeSpending:{},debtBudgets:{},debtSpending:{},savingsBudgets:{},savingsSpending:{},debtOrder:'avalanche',archives:state.archives||{}};
       for(let i=0;i<12;i++) state.months[pk(i)]=emptyMonth();
       applyTheme(); updateBrand(); saveState();
       closeModal(); goTo(currentPanel);
@@ -2656,6 +2673,7 @@ function getMonthIncomeAndSpending(year, mi){
    carried into this one. Nothing rolls into the very first month — that's
    what the one-time starting balance is for instead. */
 function getRolloverIntoMonth(year, mi){
+  if(!state.settings.rolloverEnabled) return 0;
   if(monthSeq(year,mi) <= getFirstMonthSeq()) return 0;
   const py = mi===0 ? year-1 : year;
   const pmi = mi===0 ? 11 : mi-1;
