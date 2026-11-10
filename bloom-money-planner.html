@@ -2716,7 +2716,7 @@ function renderMonthCategoryList(cat){
     const upcoming = !statusNote && isUpcomingPaycheck(i, pk(currentMonthIndex));
     const meta2 = [statusNote || (upcoming ? 'Expected '+dateLabel+' · included in safe to spend' : dateLabel), i.notes].filter(Boolean).join(' — ');
     return `
-    <div class="row-line ${meta.rowClass}" style="align-items:flex-start;${statusNote?'opacity:.55;':''}">
+    <div class="row-line ${meta.rowClass}" style="align-items:center;${statusNote?'opacity:.55;':''}">
       <div style="flex:1;">
         <div class="rname">${escapeHtml(i.name)}</div>
         ${meta2 ? `<div style="font-size:12px;color:var(--ink-soft);margin-top:2px;">${escapeHtml(meta2)}</div>` : ''}
@@ -3524,7 +3524,7 @@ function budgetCardsHtml(mi, items, budgetStore, spendStore, opts){
       const dateLabel = xDate ? new Date(xDate+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
       const statusNote = entryStatusNote(x, pk(mi));
       const metaLine = [statusNote || dateLabel, x.notes].filter(Boolean).join(' — ');
-      return `<div class="row-line" style="align-items:flex-start;${statusNote?'opacity:.55;':''}">
+      return `<div class="row-line" style="align-items:center;${statusNote?'opacity:.55;':''}">
         <div style="flex:1;"><div class="rname">${escapeHtml(x.name)}</div>${metaLine?`<div style="font-size:11.5px;color:var(--ink-soft);margin-top:2px;">${escapeHtml(metaLine)}</div>`:''}</div>
         <div class="ramt">${fmtMoneyPlain(x.amount)}</div>
         <button class="icon-btn" data-cb-item-edit="${it.id}|${x.id}">Edit</button>
