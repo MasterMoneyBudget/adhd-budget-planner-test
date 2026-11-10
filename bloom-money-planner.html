@@ -4,17 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Budget &amp; Planner</title>
-<!-- Installable app ("Download the app"). These files sit next to this page on
-     your site: manifest.webmanifest, sw.js and the icons/ folder. If they're
-     missing, the planner still works exactly as before; it just can't install. -->
-<link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#C9738C">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Budget">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..700&family=Nunito+Sans:wght@400;600;700;800&display=swap');
@@ -186,15 +175,6 @@ main.content{flex:1;min-width:0;padding:34px 40px 80px;max-width:980px;}
 .view-toggle button{border:none;background:none;padding:7px 16px;border-radius:999px;font-size:12.5px;font-weight:800;color:var(--ink-soft);}
 .view-toggle button.active{background:var(--surface);color:var(--primary-strong);box-shadow:0 1px 3px rgba(0,0,0,0.08);}
 
-.install-btn{
-  display:flex;align-items:center;justify-content:center;gap:8px;width:100%;
-  background:none;border:1.5px solid var(--line);color:var(--ink);
-  padding:10px 14px;border-radius:999px;font-weight:800;font-size:13px;
-}
-.install-btn:hover{background:var(--surface-alt);}
-.install-btn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
-.install-steps{margin:0;padding-left:20px;font-size:14px;line-height:1.6;color:var(--ink);}
-.install-steps li{margin-bottom:6px;}
 
 .hero{
   background:linear-gradient(135deg, var(--surface-alt), var(--surface));
@@ -451,11 +431,6 @@ textarea.notes:focus, input:focus, select:focus{outline:2px solid var(--primary)
         Settings
       </button>
     </nav>
-
-    <button class="install-btn" id="sidebarInstallBtn" type="button" style="display:none;">
-      <svg viewBox="0 0 20 20"><path d="M10 3v9"/><polyline points="6.5,8.5 10,12 13.5,8.5"/><path d="M4 13.5v2.5h12v-2.5"/></svg>
-      Download the app
-    </button>
 
     <div class="sidebar-footer" id="sidebarFooter"></div>
   </aside>
@@ -743,10 +718,6 @@ textarea.notes:focus, input:focus, select:focus{outline:2px solid var(--primary)
         </div>
       </div>
 
-      <div class="card" id="installAppCard">
-        <h3 style="font-size:16px;margin-bottom:6px;">Get the app</h3>
-        <div class="sub" id="installAppText" style="margin-bottom:12px;">Put the planner on your home screen or desktop so it opens like any other app, in its own window. It's the same planner with the same account, and your data stays synced.</div>
-        <button class="btn" id="settingsInstallBtn" type="button">Download the app</button>
       </div>
 
       <div class="card" id="syncStatusCard">
@@ -1368,7 +1339,6 @@ const GUIDE_ITEMS = [
   {t:'Savings', d:'Set up as many funds as you like — an emergency cushion, a trip, anything — each with its own progress bar and optional target date.'},
   {t:'Debt', d:'List out what you owe. Each debt gets an automatic payoff estimate, and you can sort by highest interest first or smallest balance first.'},
   {t:'Envelopes', d:'Twelve reusable tabs — one per month. Log income and money in right away, and give every kind of spending — rent, groceries, coffee, travel, anything — its own envelope with a monthly budget. Add as many categories as you need, and use the "Track spending" button in the sidebar to log something from anywhere. Switch the top cards to "Budgeted" to compare budgeted income with budgeted spending and see how much is left to budget.'},
-  {t:'Get the app', d:'Use "Download the app" in the sidebar or in Settings to put the planner on your phone\'s home screen or your computer like a regular app. It uses the same account, so your data comes with you.'},
   {t:'Yearly review', d:'Tucked under Envelopes. Every month added together into one picture: income vs. spending, savings progress, and debt paid down.'},
   {t:'Settings', d:'Your name, your colorway, night mode, backups, and the option to erase everything and start fresh.'}
 ];
@@ -3777,84 +3747,6 @@ window.addEventListener('pagehide', ()=>{
     try{ localStorage.setItem(LOCAL_PREFIX+'bloomData', pendingSaveValue); }catch(e){}
   }
 });
-
-/* ============ INSTALL AS AN APP ============
-   Uses the browser's own install prompt where there is one (Chrome, Edge,
-   Samsung Internet, Android). Where there isn't one (iPhone/iPad, Safari on
-   Mac, Firefox), the button shows short steps for that device instead. None of
-   this touches your planner data. */
-let deferredInstallPrompt = null;
-function isRunningAsApp(){
-  try{ return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone===true; }catch(e){ return false; }
-}
-function detectInstallPlatform(){
-  const ua = navigator.userAgent || '';
-  const isIOS = /iPad|iPhone|iPod/.test(ua) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
-  if(isIOS) return 'ios';
-  if(/Android/i.test(ua)) return 'android';
-  if(/Firefox\//.test(ua)) return 'firefox';
-  if(/Safari\//.test(ua) && !/Chrome\/|Chromium\/|Edg\//.test(ua)) return 'mac-safari';
-  return 'desktop';
-}
-function updateInstallButtons(){
-  const asApp = isRunningAsApp();
-  const side = document.getElementById('sidebarInstallBtn');
-  const setBtn = document.getElementById('settingsInstallBtn');
-  const text = document.getElementById('installAppText');
-  if(side) side.style.display = asApp ? 'none' : '';
-  if(setBtn) setBtn.style.display = asApp ? 'none' : '';
-  if(text && asApp) text.textContent = "You're using the installed app. Nothing more to do here.";
-}
-function openInstallInstructions(){
-  const p = detectInstallPlatform();
-  const share = '<svg viewBox="0 0 20 20" width="15" height="15" style="vertical-align:-2px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;"><path d="M10 2.5v10"/><polyline points="6.5,6 10,2.5 13.5,6"/><path d="M6 9H4.5v8.5h11V9H14"/></svg>';
-  const steps = {
-    ios: ['Open this page in <b>Safari</b> (or Chrome) on your iPhone or iPad.',
-          `Tap the <b>Share</b> button ${share} (at the bottom of the screen in Safari, or the top right in Chrome).`,
-          'Scroll down and tap <b>Add to Home Screen</b>, then <b>Add</b>.',
-          'Open the new icon on your home screen and sign in once. Your synced data will appear.'],
-    android: ['Tap the <b>⋮</b> menu in the top right of Chrome.',
-              'Tap <b>Install app</b> (or <b>Add to Home screen</b>), then <b>Install</b>.',
-              'The planner shows up with your other apps.'],
-    'mac-safari': ['In Safari, open the <b>File</b> menu (or the Share button).',
-                   'Choose <b>Add to Dock</b>, then <b>Add</b>.',
-                   'The planner opens from your Dock in its own window.'],
-    firefox: ["Firefox can't install web apps on desktop.",
-              'Open this page in <b>Chrome</b>, <b>Edge</b> or <b>Safari</b>, then use <b>Download the app</b> there.'],
-    desktop: ['Look for the <b>install</b> icon at the right end of the address bar, and click it.',
-              'No icon? Open the browser menu (<b>⋮</b> or <b>…</b>) and choose <b>Install Budget &amp; Planner</b>. In Chrome it may be under <b>Cast, save and share</b>; in Edge, under <b>Apps</b>.',
-              'The planner opens in its own window and can be pinned to your taskbar or Dock.']
-  }[p];
-  const iosNote = p==='ios' ? `<div style="margin-top:12px;font-size:13px;color:var(--ink-soft);line-height:1.5;">On iPhone and iPad, the home-screen app keeps its own sign-in, separate from Safari's. You'll only need to sign in once.</div>` : '';
-  openModal(`
-    <h3>Download the app</h3>
-    <ol class="install-steps">${steps.map(s=>`<li>${s}</li>`).join('')}</ol>
-    ${iosNote}
-    <div class="modal-actions"><button class="btn" id="closeInstallHelp">Got it</button></div>
-  `,(m)=>{ m.querySelector('#closeInstallHelp').addEventListener('click', closeModal); });
-}
-async function handleInstallClick(){
-  if(deferredInstallPrompt){
-    const promptEvent = deferredInstallPrompt;
-    deferredInstallPrompt = null; // a prompt can only be shown once
-    try{ promptEvent.prompt(); await promptEvent.userChoice; }catch(e){ openInstallInstructions(); }
-    updateInstallButtons();
-    return;
-  }
-  openInstallInstructions();
-}
-window.addEventListener('beforeinstallprompt', (e)=>{
-  e.preventDefault(); // keep it for our own button instead of a browser banner
-  deferredInstallPrompt = e;
-  updateInstallButtons();
-});
-window.addEventListener('appinstalled', ()=>{ deferredInstallPrompt = null; updateInstallButtons(); });
-document.getElementById('sidebarInstallBtn').addEventListener('click', handleInstallClick);
-document.getElementById('settingsInstallBtn').addEventListener('click', handleInstallClick);
-if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
-  window.addEventListener('load', ()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{ /* no sw.js uploaded — planner works as normal */ }); });
-}
-updateInstallButtons();
 
 /* ============ INIT ============ */
 async function requireSignIn(){
