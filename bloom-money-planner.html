@@ -1332,7 +1332,7 @@ const CURRENCIES = [
 const GUIDE_ITEMS = [
   {t:'Home', d:'Pick any month and see its whole picture at a glance: income vs. spending, where the money is going, and what\'s left to spend, all as charts.'},
   {t:'Today', d:'A quick-glance page for right now: how much you\'ve saved, what you still owe, what\'s safe to spend this month, what\'s coming up, and which goals are in motion.'},
-  {t:'Calendar', d:'Tap any day to add a bill, payday, or note. Give it a fixed amount and send it straight into a specific envelope, income, debt or savings — even repeat it. Repeats only fill in dates from today forward, and an amount only counts in your totals once its date arrives (or sooner, if you tick it as paid).'},
+  {t:'Calendar', d:'Tap any day to add a bill, payday, or note. Give it a fixed amount and send it straight into a specific envelope, income, debt or savings — even repeat it. Repeats only fill in dates from today forward. Paychecks count toward the month straight away, so safe to spend reflects the income you\'re expecting; bills, debt payments and savings only count once their date arrives (or sooner, if you tick them as paid).'},
   {t:'Goals', d:'The bigger picture behind all this planning. Tap a goal\'s status pill to cycle it between not started, in progress, and done.'},
   {t:'Savings', d:'Set up as many funds as you like — an emergency cushion, a trip, anything — each with its own progress bar and optional target date.'},
   {t:'Debt', d:'List out what you owe. Each debt gets an automatic payoff estimate, and you can sort by highest interest first or smallest balance first.'},
@@ -1958,6 +1958,7 @@ function renderToday(){
     <div class="stat ${mIncome-mExpense>=0?'calm':'warm'}">
       <div class="label">${MONTH_NAMES[currentMonthIndex]} safe to spend</div>
       <div class="value">${fmtMoneyPlain(mIncome-mExpense)}</div>
+      ${upcomingPaycheckCaption(currentMonthIndex)}
     </div>
     <div class="stat">
       <div class="label">Debt minimums due monthly</div>
@@ -2223,7 +2224,7 @@ function openDayModal(key){
         <option value="monthly">Monthly</option>
       </select>
       <div style="font-size:11.5px;color:var(--ink-soft);font-weight:700;margin-top:6px;line-height:1.45;">
-        ${key < todayKeyStr() ? 'This date has passed, so a repeat starts from today on the same schedule. Past dates are left alone. ' : ''}Amounts sent to an envelope, debt, fund or income only count once their date arrives, or sooner if you tick them as paid.
+        ${key < todayKeyStr() ? 'This date has passed, so a repeat starts from today on the same schedule. Past dates are left alone. ' : ''}Paychecks count toward the month right away. Amounts sent to an envelope, debt or fund only count once their date arrives, or sooner if you tick them as paid.
       </div>
     </div>
     <div class="modal-actions">
@@ -2664,8 +2665,28 @@ function entryStatus(entry, slotKey){
   const hit = getEventIndex()[entry.sourceEventId];
   if(!hit) return 'counts';
   if(slotKey && slotKeyFromDateKey(hit.key)!==slotKey) return 'elsewhere';
+  // Paychecks count toward their month as soon as they're on the calendar, so
+  // "safe to spend" reflects the income you're expecting this month. Bills,
+  // debt payments and savings transfers still wait until their date.
+  if(hit.ev.flowTo==='income') return 'counts';
   if(!hit.ev.paid && hit.key > todayKeyStr()) return 'scheduled';
   return 'counts';
+}
+/* A calendar paycheck whose date hasn't arrived yet (it already counts). */
+function isUpcomingPaycheck(entry, slotKey){
+  if(!entry || !entry.sourceEventId) return false;
+  const hit = getEventIndex()[entry.sourceEventId];
+  return !!hit && hit.ev.flowTo==='income' && !hit.ev.paid && hit.key > todayKeyStr()
+    && (!slotKey || slotKeyFromDateKey(hit.key)===slotKey);
+}
+/* How much of a month's income is paychecks that haven't arrived yet. */
+function upcomingPaycheckTotal(mi){
+  const k = pk(mi);
+  return (getMonthData(mi).income||[]).filter(i=>isUpcomingPaycheck(i,k)).reduce((s,i)=>s+Number(i.amount||0),0);
+}
+function upcomingPaycheckCaption(mi){
+  const up = upcomingPaycheckTotal(mi);
+  return up>0 ? `<div class="caption">Includes ${fmtMoneyPlain(up)} in upcoming paychecks</div>` : '';
 }
 function countsIn(slotKey){ return (entry)=>entryStatus(entry, slotKey)==='counts'; }
 function sumCat(arr, slotKey){ return arr.filter(countsIn(slotKey)).reduce((s,i)=>s+Number(i.amount||0),0); }
@@ -2692,7 +2713,8 @@ function renderMonthCategoryList(cat){
     const iDate = i.date || entryEventKey(i);
     const dateLabel = iDate ? new Date(iDate+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
     const statusNote = entryStatusNote(i, pk(currentMonthIndex));
-    const meta2 = [statusNote || dateLabel, i.notes].filter(Boolean).join(' — ');
+    const upcoming = !statusNote && isUpcomingPaycheck(i, pk(currentMonthIndex));
+    const meta2 = [statusNote || (upcoming ? 'Expected '+dateLabel+' · included in safe to spend' : dateLabel), i.notes].filter(Boolean).join(' — ');
     return `
     <div class="row-line ${meta.rowClass}" style="align-items:flex-start;${statusNote?'opacity:.55;':''}">
       <div style="flex:1;">
@@ -2848,7 +2870,7 @@ function renderMonthStatsOnly(){
       <div class="stat ${plan.left>=0?'calm':'warm'}"><div class="label">${plan.left>=0?'Left to budget':'Over-budgeted by'}</div><div class="value">${fmtMoneyPlain(Math.abs(plan.left))}</div><div class="caption">Budgeted income minus budgeted spending</div></div>`;
   } else {
     document.getElementById('monthStats').innerHTML = `
-      <div class="stat calm"><div class="label">Income</div><div class="value">${fmtMoneyPlain(incomeActual)}</div></div>
+      <div class="stat calm"><div class="label">Income</div><div class="value">${fmtMoneyPlain(incomeActual)}</div>${upcomingPaycheckCaption(currentMonthIndex)}</div>
       <div class="stat warm"><div class="label">Total spending</div><div class="value">${fmtMoneyPlain(totalOut)}</div></div>
       <div class="stat"><div class="label">Safe to spend</div><div class="value">${fmtMoneyPlain(incomeActual-totalOut)}</div></div>`;
   }
@@ -3464,7 +3486,7 @@ function renderHome(){
   const savingsTot = savingsItemTotals(currentMonthIndex);
   const totalOut = env.actual+debtTot.actual+savingsTot.actual;
   document.getElementById('homeStats').innerHTML = `
-    <div class="stat calm"><div class="label">Income</div><div class="value">${fmtMoneyPlain(incomeActual)}</div></div>
+    <div class="stat calm"><div class="label">Income</div><div class="value">${fmtMoneyPlain(incomeActual)}</div>${upcomingPaycheckCaption(currentMonthIndex)}</div>
     <div class="stat warm"><div class="label">Total spending</div><div class="value">${fmtMoneyPlain(totalOut)}</div></div>
     <div class="stat ${incomeActual-totalOut>=0?'calm':'warm'}"><div class="label">Safe to spend</div><div class="value">${fmtMoneyPlain(incomeActual-totalOut)}</div></div>`;
 
