@@ -1375,6 +1375,7 @@ let currentPanel='today';
 let currentMonthIndex=new Date().getMonth();
 
 function goTo(target){
+  settleCalendarBalancesAndSave();
   currentPanel=target;
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.getElementById('panel-'+target).classList.add('active');
@@ -2191,14 +2192,14 @@ function addMonthEntryForEventInYear(ev, key){
     const debtId = ev.flowTo.slice(5);
     if(!state.debts.some(d=>d.id===debtId)) return;
     ensureDebtMonth(mi);
-    state.debtSpending[pk(mi)][debtId].push({id:uid(), name:ev.label, amount:ev.amount, sourceEventId:ev.id});
+    state.debtSpending[pk(mi)][debtId].push({id:uid(), name:ev.label, amount:ev.amount, sourceEventId:ev.id, track:true});
     return;
   }
   if(ev.flowTo.startsWith('savings:')){
     const fundId = ev.flowTo.slice(8);
     if(!state.funds.some(f=>f.id===fundId)) return;
     ensureSavingsMonth(mi);
-    state.savingsSpending[pk(mi)][fundId].push({id:uid(), name:ev.label, amount:ev.amount, sourceEventId:ev.id});
+    state.savingsSpending[pk(mi)][fundId].push({id:uid(), name:ev.label, amount:ev.amount, sourceEventId:ev.id, track:true});
     return;
   }
   if(!FLOW_BUCKETS[ev.flowTo]) return;
@@ -2223,13 +2224,13 @@ function removeMonthEntriesForEvent(eventId){
       // Debt/savings need their balance effect reversed, not just the log entry removed.
       if(state.debtSpending[k]){
         Object.keys(state.debtSpending[k]).forEach(debtId=>{
-          state.debtSpending[k][debtId].filter(x=>x.sourceEventId===eventId).forEach(x=>reverseDebtPayment(debtId, x.amount));
+          state.debtSpending[k][debtId].filter(x=>x.sourceEventId===eventId && x.applied).forEach(x=>reverseDebtPayment(debtId, x.amount));
           state.debtSpending[k][debtId] = state.debtSpending[k][debtId].filter(x=>x.sourceEventId!==eventId);
         });
       }
       if(state.savingsSpending[k]){
         Object.keys(state.savingsSpending[k]).forEach(fundId=>{
-          state.savingsSpending[k][fundId].filter(x=>x.sourceEventId===eventId).forEach(x=>reverseSavingsContribution(fundId, x.amount));
+          state.savingsSpending[k][fundId].filter(x=>x.sourceEventId===eventId && x.applied).forEach(x=>reverseSavingsContribution(fundId, x.amount));
           state.savingsSpending[k][fundId] = state.savingsSpending[k][fundId].filter(x=>x.sourceEventId!==eventId);
         });
       }
@@ -3127,6 +3128,7 @@ const QUICK_ADD_CATEGORIES = [
   {value:'income', label:'Income'}
 ];
 function refreshAfterDataChange(){
+  settleCalendarBalancesAndSave();
   if(currentPanel==='today') renderToday();
   if(currentPanel==='home') renderHome();
   if(currentPanel==='months') renderMonths();
@@ -3714,6 +3716,125 @@ function applySavingsContribution(fundId, amount){
   const fund = state.funds.find(f=>f.id===fundId);
   if(fund) fund.saved = Number(fund.saved||0) + Number(amount||0);
 }
+/* ---- Calendar debt payments & savings transfers -> balances ----
+   A calendar item sent to a debt or a savings fund lowers that debt's balance
+   (or adds to that fund's saved amount) once its date arrives, or straight
+   away if it's ticked as paid. Unticking it, deleting it or editing its amount
+   undoes exactly what was applied. Each entry remembers whether it has been
+   applied ("applied"), so nothing is ever counted twice.
+   Existing data: calendar items from before this update never changed a
+   balance, and their dates before this update are left that way. Their dates
+   from the update on are handled like new ones. */
+function entryWasApplied(x){
+  // Manual payments/contributions are applied the moment they're logged;
+  // calendar ones only once they've been settled.
+  return !x.sourceEventId || !!x.applied;
+}
+const CALENDAR_BALANCE_SINCE = '2026-11-13'; // the day this update was made
+function settleCalendarBalances(){
+  let changed = false;
+  const since = CALENDAR_BALANCE_SINCE;
+  invalidateEventIndex();
+  const idx = getEventIndex();
+  const settle = (store, apply, reverse)=>{
+    Object.keys(store||{}).forEach(slot=>{
+      Object.keys(store[slot]||{}).forEach(itemId=>{
+        (store[slot][itemId]||[]).forEach(x=>{
+          if(!x.sourceEventId) return;
+          const hit = idx[x.sourceEventId];
+          if(!hit) return;
+          if(!x.track && hit.key < since) return;          // older item, older date: leave as it was
+          const due = entryStatus(x, slot)==='counts';     // date arrived (or ticked paid), in its own month
+          if(due && !x.applied){ apply(itemId, x.amount); x.applied = true; changed = true; }
+          else if(!due && x.applied){ reverse(itemId, x.amount); x.applied = false; changed = true; }
+        });
+      });
+    });
+  };
+  settle(state.debtSpending, applyDebtPayment, reverseDebtPayment);
+  settle(state.savingsSpending, applySavingsContribution, reverseSavingsContribution);
+  return changed;
+}
+/* ---- One-time catch-up for calendar payments from before this update ----
+   Calendar debt payments and savings transfers dated before the update never
+   reached the Debt and Savings tabs. Some people adjusted those balances by
+   hand, so instead of applying them silently, the planner asks once, showing
+   exactly what would change. "Update" applies them; "Leave" marks them as
+   handled. Either way that person is never asked about them again. */
+function findCalendarCatchUp(){
+  const idx = getEventIndex();
+  const found = [];
+  const scan = (store, kind)=>{
+    Object.keys(store||{}).forEach(slot=>{
+      Object.keys(store[slot]||{}).forEach(itemId=>{
+        (store[slot][itemId]||[]).forEach(x=>{
+          if(!x.sourceEventId || x.track || x.applied || x.catchUpHandled) return;
+          const hit = idx[x.sourceEventId];
+          if(!hit || hit.key >= CALENDAR_BALANCE_SINCE) return;
+          if(entryStatus(x, slot)!=='counts') return;       // only payments whose date has passed, in their own month
+          found.push({kind, itemId, entry:x});
+        });
+      });
+    });
+  };
+  scan(state.debtSpending, 'debt');
+  scan(state.savingsSpending, 'savings');
+  return found;
+}
+let calendarCatchUpOffered = false;
+function maybeOfferCalendarCatchUp(){
+  if(calendarCatchUpOffered) return;
+  if(typeof loadOk!=='undefined' && !loadOk) return;
+  if(typeof getDemoEditCount==='function') return;     // the demo resets every visit
+  invalidateEventIndex();
+  const found = findCalendarCatchUp();
+  if(!found.length) return;
+  calendarCatchUpOffered = true;
+  const groups = {};
+  found.forEach(f=>{
+    const g = groups[f.kind+':'+f.itemId] = groups[f.kind+':'+f.itemId] || {kind:f.kind, itemId:f.itemId, total:0, count:0};
+    g.total += Number(f.entry.amount||0); g.count++;
+  });
+  const rows = Object.values(groups).map(g=>{
+    if(g.kind==='debt'){
+      const d = state.debts.find(x=>x.id===g.itemId); if(!d) return '';
+      const now = Number(d.balance||0), next = Math.max(0, now-g.total);
+      return `<div class="row-line"><div style="flex:1;"><div class="rname">${escapeHtml(d.name)}</div><div style="font-size:11.5px;color:var(--ink-soft);margin-top:2px;">${g.count} payment${g.count===1?'':'s'}, ${fmtMoneyPlain(g.total)}</div></div><div class="ramt">${fmtMoneyPlain(now)} → ${fmtMoneyPlain(next)} owed</div></div>`;
+    }
+    const f = state.funds.find(x=>x.id===g.itemId); if(!f) return '';
+    const now = Number(f.saved||0);
+    return `<div class="row-line"><div style="flex:1;"><div class="rname">${escapeHtml(f.name)}</div><div style="font-size:11.5px;color:var(--ink-soft);margin-top:2px;">${g.count} transfer${g.count===1?'':'s'}, ${fmtMoneyPlain(g.total)}</div></div><div class="ramt">${fmtMoneyPlain(now)} → ${fmtMoneyPlain(now+g.total)} saved</div></div>`;
+  }).join('');
+  openModal(`
+    <h3>Update your debt and savings balances?</h3>
+    <p style="font-size:14px;color:var(--ink-soft);line-height:1.55;margin:0 0 12px;">Debt payments and savings transfers you've added on the calendar now update your Debt and Savings tabs. These past ones haven't been counted yet:</p>
+    <div style="margin-bottom:12px;">${rows}</div>
+    <p style="font-size:13px;color:var(--ink-soft);line-height:1.55;margin:0;">If you already adjusted these balances yourself, choose <b>Leave them as they are</b> so nothing is counted twice. You'll only be asked once.</p>
+    <div class="modal-actions">
+      <button class="btn ghost" id="catchUpLeave">Leave them as they are</button>
+      <button class="btn" id="catchUpApply">Update my balances</button>
+    </div>
+  `,(m)=>{
+    m.querySelector('#catchUpApply').addEventListener('click', ()=>{
+      found.forEach(f=>{
+        if(f.kind==='debt') applyDebtPayment(f.itemId, f.entry.amount);
+        else applySavingsContribution(f.itemId, f.entry.amount);
+        f.entry.applied = true; f.entry.track = true;   // from here on it behaves like any calendar payment
+      });
+      saveState(); closeModal(); refreshAfterDataChange();
+    });
+    m.querySelector('#catchUpLeave').addEventListener('click', ()=>{
+      found.forEach(f=>{ f.entry.catchUpHandled = true; });
+      saveState(); closeModal(); refreshAfterDataChange();
+    });
+  });
+}
+function settleCalendarBalancesAndSave(){
+  if(typeof loadOk!=='undefined' && !loadOk) return;   // never act on a planner that didn't load
+  const changed = settleCalendarBalances();
+  // (The free demo resets every visit, so it doesn't spend a free change on this.)
+  if(changed && typeof getDemoEditCount!=='function') saveState();
+}
 function reverseSavingsContribution(fundId, amount){
   const fund = state.funds.find(f=>f.id===fundId);
   if(fund) fund.saved = Math.max(0, Number(fund.saved||0) - Number(amount||0));
@@ -3746,7 +3867,7 @@ function wireBudgetCards(el, mi, items, budgetStore, spendStore, onListChange, o
     const [itemId, spendId] = b.dataset.cbItemDel.split('|');
     const removed = spendStore[pk(mi)] && spendStore[pk(mi)][itemId] && spendStore[pk(mi)][itemId].find(x=>x.id===spendId);
     if(spendStore[pk(mi)] && spendStore[pk(mi)][itemId]) spendStore[pk(mi)][itemId] = spendStore[pk(mi)][itemId].filter(x=>x.id!==spendId);
-    if(removed && opts.onReverse) opts.onReverse(itemId, removed.amount);
+    if(removed && opts.onReverse && entryWasApplied(removed)) opts.onReverse(itemId, removed.amount);
     saveState(); onListChange(true);
   }));
 }
@@ -3779,7 +3900,7 @@ function openItemSpendModal(itemId, items, mi, spendStore, onChange, opts, exist
         const idx = spendStore[pk(mi)][itemId].findIndex(x=>x.id===existing.id);
         if(idx>-1) spendStore[pk(mi)][itemId][idx] = {id:existing.id, name, amount, date};
         // Undo the old amount's effect on the linked balance, then apply the new one.
-        if(opts.onReverse) opts.onReverse(itemId, existing.amount);
+        if(opts.onReverse && entryWasApplied(existing)) opts.onReverse(itemId, existing.amount);
         if(opts.onApply) opts.onApply(itemId, amount);
       } else {
         spendStore[pk(mi)][itemId].push({id:uid(), name, amount, date});
@@ -3996,6 +4117,7 @@ async function checkSyncAndLoad(){
   buildMonthsDrawer();
   renderSidebarFooter();
   goTo('today');
+  maybeOfferCalendarCatchUp();
 })();
 </script>
 </body>
