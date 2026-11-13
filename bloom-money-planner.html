@@ -377,6 +377,7 @@ textarea.notes:focus, input:focus, select:focus{outline:2px solid var(--primary)
 <div id="syncWarningBanner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:250;background:#B27A3E;color:#fff;padding:11px 16px;text-align:center;font-size:13px;font-weight:700;">
   <span id="syncWarningText">Couldn't reach your synced data just now — this may be showing a blank or out-of-date view.</span>
   <button id="syncRetryBtn" style="margin-left:10px;background:#fff;color:#B27A3E;border:none;padding:5px 14px;border-radius:999px;font-weight:800;font-size:12.5px;cursor:pointer;">Retry</button>
+  <button id="syncSecondaryBtn" style="display:none;margin-left:6px;background:none;color:#fff;border:1.5px solid #fff;padding:4px 13px;border-radius:999px;font-weight:800;font-size:12.5px;cursor:pointer;">Keep this version</button>
 </div>
 
 <div class="app">
@@ -1049,15 +1050,43 @@ async function getSupabaseSession(){
 }
 let lastSyncError = false;
 let lastSyncErrorMessage = '';
-async function supabaseGetData(){
+
+/* ============ DATA SAFETY ============
+   Supabase stores each account's whole planner as one record, and every save
+   replaces that record. So the planner follows three rules:
+   1. Nothing is saved anywhere until this account's saved planner has been
+      read successfully. If the read fails, even for a moment, saving is
+      paused and a banner offers a retry. A blank screen is never saved.
+   2. If Supabase can't see a saved planner for this account, the planner
+      only ever *adds* one ("insert if absent"). It never replaces a record
+      it hasn't actually read.
+   3. Every save checks that the record hasn't been changed by another
+      device or tab since this one loaded it, and refuses to save a version
+      that would wipe out most of the planner unless the person chose to
+      (erase, restore a backup, archive). */
+let loadOk = false;          // true once the saved planner has been read (or confirmed not to exist)
+let lastServerRev = 0;       // revision number of the record this page last read or wrote
+let lastSyncedCount = 0;     // how many entries that record held, for the "wiping most of it" check
+let syncHalted = false;      // a conflict or a held save is waiting on the person; don't write meanwhile
+
+/* Reads this account's saved planner from Supabase.
+   {ok:true, exists:true, data} — found it
+   {ok:true, exists:false}      — Supabase answered, and this account has nothing saved yet
+   {ok:false}                   — couldn't find out (sign-in hiccup, network, error) */
+async function supabaseRead(){
   const session = await getSupabaseSession();
-  if(!session) return null;
+  if(!session){
+    lastSyncError = true;
+    lastSyncErrorMessage = "your sign-in couldn't be confirmed";
+    return {ok:false};
+  }
   for(let attempt=0; attempt<3; attempt++){
     try{
       const { data, error } = await sb.from('planner_data').select('data').eq('user_id', session.user.id).maybeSingle();
       if(!error){
         lastSyncError = false; lastSyncErrorMessage = '';
-        return (data && data.data) || null; // null here genuinely means "no data saved yet" — not an error
+        if(data) return {ok:true, exists:true, data:data.data||null};
+        return {ok:true, exists:false};
       }
       lastSyncErrorMessage = error.message || JSON.stringify(error);
       console.error('Supabase read failed:', error);
@@ -1067,28 +1096,73 @@ async function supabaseGetData(){
     }
     if(attempt<2) await new Promise(r=>setTimeout(r, 500*(attempt+1))); // brief backoff — helps with mobile network hiccups
   }
-  // All attempts failed — flag it so the UI can tell you, instead of silently
-  // showing a blank planner as if that were your real (empty) data.
   lastSyncError = true;
-  return null;
+  return {ok:false};
 }
-async function supabaseSaveData(value){
+
+/* Counts everything a person has entered, so a save that would quietly wipe
+   out most of it can be caught before it reaches Supabase. */
+function countEntries(s){
+  if(!s) return 0;
+  let n = 0;
+  const lists = (store)=>Object.values(store||{}).forEach(v=>{
+    if(Array.isArray(v)) n += v.length;
+    else if(v && typeof v==='object') Object.values(v).forEach(x=>{ if(Array.isArray(x)) n += x.length; });
+  });
+  Object.values(s.events||{}).forEach(list=>{ n += (list||[]).length; });
+  n += (s.funds||[]).length + (s.debts||[]).length + (s.goals||[]).length;
+  Object.values(s.months||{}).forEach(m=>{ ['income','bills','expenses','debt','savings'].forEach(c=>{ n += ((m&&m[c])||[]).length; }); });
+  lists(s.envelopeSpending); lists(s.debtSpending); lists(s.savingsSpending);
+  return n;
+}
+
+/* Writes one saved version to Supabase, safely. Returns
+   'saved' | 'conflict' | 'held' | 'error'. */
+async function supabaseWrite(value, opts){
+  opts = opts||{};
   const session = await getSupabaseSession();
-  if(!session) return false;
+  if(!session){ lastSyncError = true; lastSyncErrorMessage = "your sign-in couldn't be confirmed"; return 'error'; }
+  const obj = JSON.parse(value);
+  const count = countEntries(obj);
+  // Would this save wipe out most of what's there? Only allow that when the
+  // person asked for it (erase, restore a backup, archive) or confirms it.
+  if(!opts.allowShrink && lastSyncedCount>=10 && count < lastSyncedCount*0.3){
+    return 'held';
+  }
   for(let attempt=0; attempt<3; attempt++){
     try{
-      const { error } = await sb.from('planner_data').upsert({ user_id: session.user.id, data: JSON.parse(value) }, { onConflict: 'user_id' });
-      if(!error){ lastSyncError = false; lastSyncErrorMessage = ''; return true; }
-      lastSyncErrorMessage = error.message || JSON.stringify(error);
-      console.error('Supabase write failed:', error);
+      // What's on the server right now?
+      const cur = await sb.from('planner_data').select('rev:data->_rev').eq('user_id', session.user.id).maybeSingle();
+      if(cur.error) throw cur.error;
+      if(!cur.data){
+        // Nothing visible for this account: only ever add a record, never replace one.
+        obj._rev = 1;
+        const ins = await sb.from('planner_data')
+          .upsert({ user_id: session.user.id, data: obj }, { onConflict:'user_id', ignoreDuplicates:true })
+          .select('user_id');
+        if(ins.error) throw ins.error;
+        if(!ins.data || !ins.data.length) return 'conflict'; // a record exists that this page never read
+        lastServerRev = 1;
+      } else {
+        const serverRev = Number(cur.data.rev)||0;
+        if(serverRev > lastServerRev && !opts.force) return 'conflict'; // changed on another device/tab
+        obj._rev = Math.max(serverRev, lastServerRev) + 1;
+        const up = await sb.from('planner_data').upsert({ user_id: session.user.id, data: obj }, { onConflict:'user_id' });
+        if(up.error) throw up.error;
+        lastServerRev = obj._rev;
+      }
+      state._rev = lastServerRev;
+      lastSyncedCount = count;
+      lastSyncError = false; lastSyncErrorMessage = '';
+      return 'saved';
     }catch(e){
-      lastSyncErrorMessage = e.message || String(e);
-      console.error('Supabase write threw:', e);
+      lastSyncErrorMessage = e.message || JSON.stringify(e);
+      console.error('Supabase write failed:', e);
     }
     if(attempt<2) await new Promise(r=>setTimeout(r, 500*(attempt+1)));
   }
   lastSyncError = true;
-  return false;
+  return 'error';
 }
 
 /* ============ STORAGE (Supabase first, then Claude's storage, then this browser) ============
@@ -1100,46 +1174,52 @@ async function supabaseSaveData(value){
       open the file directly with no sign-in at all, your entries still survive closing
       and reopening the browser on that device. */
 const LOCAL_PREFIX = 'bloomTestLocal_';
+const LOCAL_OWNER_KEY = LOCAL_PREFIX+'bloomData_owner'; // which account this device's copy belongs to
 function hasRemoteStorage(){
   return typeof window!=='undefined' && window.storage && typeof window.storage.get==='function';
 }
-let lastLoadSource = 'none'; // 'supabase' | 'claude-storage' | 'local' | 'none'
-async function storageGet(key){
-  if(key==='bloomData'){
-    const session = await getSupabaseSession();
-    if(session){
-      const remote = await supabaseGetData();
-      if(remote){ lastLoadSource='supabase'; return { key, value: JSON.stringify(remote) }; }
-      // Signed in, but nothing came back. If that's because the fetch genuinely
-      // failed (not just "no data saved yet"), don't silently fall through to
-      // this device's local copy — that's how a phone can end up showing a
-      // blank planner right after a real, synced account signs in.
-      if(lastSyncError){ lastLoadSource='error'; return null; }
-    }
+let lastLoadSource = 'none'; // 'supabase' | 'claude-storage' | 'local' | 'none' | 'error'
+
+/* This device's own copy — but never another account's (e.g. on a shared computer). */
+function readLocalCopyFor(userId){
+  try{
+    const raw = localStorage.getItem(LOCAL_PREFIX+'bloomData');
+    if(!raw) return null;
+    const owner = localStorage.getItem(LOCAL_OWNER_KEY);
+    if(owner && userId && owner!==userId) return null;
+    return raw;
+  }catch(e){ return null; }
+}
+function writeLocalCopy(value){
+  try{
+    localStorage.setItem(LOCAL_PREFIX+'bloomData', value);
+    if(cachedSupabaseSession) localStorage.setItem(LOCAL_OWNER_KEY, cachedSupabaseSession.user.id);
+  }catch(e){ /* localStorage unavailable (e.g. private mode) */ }
+}
+
+/* Where the saved planner comes from. {ok, source, value, seed} */
+async function readSavedPlanner(){
+  if(supabaseConfigured){
+    const res = await supabaseRead();
+    if(!res.ok) return {ok:false};
+    if(res.exists) return {ok:true, source:'supabase', value: res.data ? JSON.stringify(res.data) : null};
+    // Supabase answered: this account has nothing saved yet. If this device has
+    // a copy from before sync was set up, bring it along (it's only ever added,
+    // never used to replace anything).
+    const local = readLocalCopyFor(cachedSupabaseSession && cachedSupabaseSession.user.id);
+    return {ok:true, source: local ? 'local' : 'none', value: local, seed:true};
   }
   if(hasRemoteStorage()){
     try{
-      const res = await window.storage.get(key, false);
-      if(res && res.value){ lastLoadSource='claude-storage'; return res; }
+      const r = await window.storage.get('bloomData', false);
+      if(r && r.value) return {ok:true, source:'claude-storage', value:r.value};
     }catch(e){ /* fall through to local */ }
   }
   try{
-    const raw = localStorage.getItem(LOCAL_PREFIX+key);
-    if(raw){ lastLoadSource='local'; return {key, value:raw}; }
-  }catch(e){ /* localStorage unavailable (e.g. private mode) */ }
-  lastLoadSource='none';
-  return null;
-}
-async function storageSet(key, value){
-  // Write locally first — this is synchronous and instant, so it's safe even
-  // if the page navigates away before the remote calls below finish.
-  try{ localStorage.setItem(LOCAL_PREFIX+key, value); }catch(e){ /* ignore */ }
-  if(key==='bloomData'){
-    await supabaseSaveData(value);
-  }
-  if(hasRemoteStorage()){
-    try{ await window.storage.set(key, value, false); }catch(e){ /* ignore */ }
-  }
+    const raw = localStorage.getItem(LOCAL_PREFIX+'bloomData');
+    if(raw) return {ok:true, source:'local', value:raw};
+  }catch(e){ /* localStorage unavailable */ }
+  return {ok:true, source:'none', value:null};
 }
 async function storageDelete(key){
   if(hasRemoteStorage()){
@@ -1148,34 +1228,64 @@ async function storageDelete(key){
   try{ localStorage.removeItem(LOCAL_PREFIX+key); }catch(e){ /* ignore */ }
 }
 
+/* ---- saving ----
+   Saves are debounced, then written one at a time, always the newest
+   version, so an older save can never land after a newer one. */
 let saveTimer=null;
-let pendingSaveValue=null;
-function saveState(){
-  clearTimeout(saveTimer);
+let pendingSaveValue=null;     // newest version not yet handed to the writer
+let pendingAllowShrink=false;
+let queuedWrite=null;          // {value, allowShrink} waiting for the writer
+let writerRunning=null;        // promise while the writer is busy
+function saveState(opts){
   invalidateEventIndex();
+  if(!loadOk){
+    // The saved planner never loaded, so what's on screen isn't the real
+    // data. Saving it would replace the real data — don't.
+    showSyncBanner('load-failed');
+    return;
+  }
+  clearTimeout(saveTimer);
   pendingSaveValue = JSON.stringify(state);
-  saveTimer=setTimeout(async ()=>{
-    const value = pendingSaveValue;
-    pendingSaveValue = null;
-    try{ await storageSet('bloomData', value); }
-    catch(e){ console.error('save failed', e); }
-  }, 250);
+  if(opts && opts.allowShrink) pendingAllowShrink = true;
+  saveTimer=setTimeout(()=>{ handOffPendingSave(); }, 250);
 }
+function handOffPendingSave(){
+  clearTimeout(saveTimer);
+  if(pendingSaveValue===null) return writerRunning || Promise.resolve();
+  queuedWrite = {value:pendingSaveValue, allowShrink:pendingAllowShrink || (queuedWrite && queuedWrite.allowShrink)};
+  pendingSaveValue = null; pendingAllowShrink = false;
+  writeLocalCopy(queuedWrite.value); // this device's copy, right away
+  if(!writerRunning) writerRunning = runWriter().finally(()=>{ writerRunning=null; });
+  return writerRunning;
+}
+async function runWriter(){
+  while(queuedWrite){
+    const job = queuedWrite; queuedWrite = null;
+    if(hasRemoteStorage()){
+      try{ await window.storage.set('bloomData', job.value, false); }catch(e){ /* ignore */ }
+    }
+    if(!supabaseConfigured || syncHalted) continue;
+    const result = await supabaseWrite(job.value, {allowShrink:job.allowShrink});
+    if(result==='conflict'){ syncHalted = true; heldWrite = job; showSyncBanner('conflict'); }
+    else if(result==='held'){ syncHalted = true; heldWrite = job; showSyncBanner('held'); }
+    else if(result==='error'){ showSyncBanner('save-failed'); }
+    else hideSyncBanner();
+  }
+}
+let heldWrite = null; // the save waiting on the person after a conflict or a "wipe most of it" check
 /* Call this before signing out or navigating away on purpose, so a save that's
    still sitting in the 250ms debounce window doesn't get lost. */
 async function flushSave(){
-  clearTimeout(saveTimer);
-  if(pendingSaveValue!==null){
-    const value = pendingSaveValue;
-    pendingSaveValue = null;
-    try{ await storageSet('bloomData', value); }
-    catch(e){ console.error('flush save failed', e); }
-  }
+  await handOffPendingSave();
+  if(writerRunning) await writerRunning;
 }
 async function loadState(){
-  try{
-    const res = await storageGet('bloomData');
-    if(res && res.value){
+  loadOk = false;
+  const res = await readSavedPlanner();
+  lastLoadSource = res.ok ? res.source : 'error';
+  if(!res.ok) return;
+  if(res.value){
+    try{
       const parsed = JSON.parse(res.value);
       state = Object.assign({}, state, parsed);
       state.settings = Object.assign({name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0, rolloverEnabled:false}, parsed.settings||{});
@@ -1223,8 +1333,24 @@ async function loadState(){
       state.goals = parsed.goals||[];
       state.debtOrder = parsed.debtOrder||'avalanche';
       migrateMonthKeysToYear();
+    }catch(e){
+      // The saved planner is there but couldn't be read. Keep saving paused so
+      // the half-loaded screen can never replace it.
+      console.error('Saved planner could not be read:', e);
+      lastSyncError = true;
+      lastSyncErrorMessage = "your saved planner couldn't be read";
+      lastLoadSource = 'error';
+      return;
     }
-  }catch(e){ /* first run, nothing saved yet */ }
+  }
+  if(res.source==='supabase'){
+    lastServerRev = Number(state._rev)||0;
+    lastSyncedCount = countEntries(state);
+  } else {
+    lastServerRev = 0;
+    lastSyncedCount = 0;
+  }
+  loadOk = true;
 }
 /* Older saves keyed these stores by plain month index ("0".."11") with no
    year at all. Move any of those straight across to this year's keys
@@ -1491,7 +1617,7 @@ document.getElementById('archiveAndResetBtn').addEventListener('click',()=>{
         envelopeBudgets:{}, envelopeSpending:{}, debtBudgets:{}, debtSpending:{}, savingsBudgets:{}, savingsSpending:{},
         debtOrder:'avalanche', archives:preservedArchives};
       for(let i=0;i<12;i++) state.months[pk(i)]=emptyMonth();
-      applyTheme(); updateBrand(); saveState();
+      applyTheme(); updateBrand(); saveState({allowShrink:true});
       closeModal(); goTo('settings');
     });
   });
@@ -1523,17 +1649,22 @@ async function runSyncDiagnostic(){
     log('   ✗ Read threw an exception: '+(e.message||String(e)));
   }
 
-  log('3. Writing your current data to Supabase (a normal save)…');
+  log('3. Checking that this account can save (without changing any data)…');
   try{
-    const { error } = await sb.from('planner_data').upsert({ user_id: session.user.id, data: state }, { onConflict: 'user_id' });
+    // Rewrites the row's own user_id onto itself: proves saving works, but never
+    // touches the planner itself. (The old check saved whatever was on screen,
+    // which could replace your real data with a blank planner.)
+    const { data, error } = await sb.from('planner_data').update({ user_id: session.user.id }).eq('user_id', session.user.id).select('user_id');
     if(error){
-      log('   ✗ Write failed: '+(error.message||JSON.stringify(error)));
+      log('   ✗ Save check failed: '+(error.message||JSON.stringify(error)));
       log('   → code: '+(error.code||'n/a')+', details: '+(error.details||'n/a')+', hint: '+(error.hint||'n/a'));
+    } else if(!data || !data.length){
+      log('   – No saved row yet, so there was nothing to check. One is created on your first save.');
     } else {
-      log('   ✓ Write succeeded.');
+      log('   ✓ Saving works.');
     }
   }catch(e){
-    log('   ✗ Write threw an exception: '+(e.message||String(e)));
+    log('   ✗ Save check threw an exception: '+(e.message||String(e)));
   }
   log('Done. If anything above shows ✗, that exact message is what to look into (often: the table from setup.sql was never created, or its RLS policies don\'t match).');
 }
@@ -1832,7 +1963,7 @@ document.getElementById('importFileInput').addEventListener('change',(e)=>{
         state.goals = parsed.goals||[];
         state.events = parsed.events||{};
         state.debtOrder = parsed.debtOrder||'avalanche';
-        applyTheme(); updateBrand(); saveState();
+        applyTheme(); updateBrand(); saveState({allowShrink:true});
         closeModal(); buildMonthsDrawer(); goTo(currentPanel);
       });
     });
@@ -1853,7 +1984,7 @@ document.getElementById('resetDataBtn').addEventListener('click',()=>{
     m.querySelector('#confirmReset').addEventListener('click', async ()=>{
       state={settings:{name:'',theme:'blush',customColor:null,darkMode:false,currency:'USD',startingBalance:0, rolloverEnabled:false},funds:[],debts:[],goals:[],events:{},months:{},budget:{income:0,debt:0,savings:0},monthlyIncomeBudget:{},envelopes:makeDefaultEnvelopes(),envelopeBudgets:{},envelopeSpending:{},debtBudgets:{},debtSpending:{},savingsBudgets:{},savingsSpending:{},debtOrder:'avalanche',archives:state.archives||{}};
       for(let i=0;i<12;i++) state.months[pk(i)]=emptyMonth();
-      applyTheme(); updateBrand(); saveState();
+      applyTheme(); updateBrand(); saveState({allowShrink:true});
       closeModal(); goTo(currentPanel);
     });
   });
@@ -3763,9 +3894,70 @@ document.getElementById('budgetIncome').addEventListener('input',(e)=>{
 // localStorage right away (the async Supabase/window.storage writes may not
 // finish in time during unload, but the local copy will be safe either way).
 window.addEventListener('pagehide', ()=>{
-  if(pendingSaveValue!==null){
-    try{ localStorage.setItem(LOCAL_PREFIX+'bloomData', pendingSaveValue); }catch(e){}
+  if(pendingSaveValue!==null) writeLocalCopy(pendingSaveValue);
+});
+
+/* ============ SYNC BANNER ============
+   One banner at the top for anything that stops a save, with a clear way out. */
+function showSyncBanner(kind){
+  const banner = document.getElementById('syncWarningBanner');
+  const text = document.getElementById('syncWarningText');
+  const primary = document.getElementById('syncRetryBtn');
+  const secondary = document.getElementById('syncSecondaryBtn');
+  const detail = lastSyncErrorMessage ? ' ('+lastSyncErrorMessage+')' : '';
+  secondary.style.display = 'none';
+  if(kind==='load-failed'){
+    text.textContent = "Couldn't load your saved planner"+detail+". To keep it safe, nothing you change here will be saved until it loads.";
+    primary.textContent = 'Retry';
+  } else if(kind==='save-failed'){
+    text.textContent = "Couldn't save your latest change to your account"+detail+". It's kept on this device and will be sent again with your next change.";
+    primary.textContent = 'Try again';
+  } else if(kind==='conflict'){
+    text.textContent = "Your account has a newer saved planner than the one on this screen (it may have been changed on another device or tab). So nothing gets overwritten, this change wasn't saved to your account.";
+    primary.textContent = 'Load the latest';
+    secondary.textContent = "Keep this device's version";
+    secondary.style.display = '';
+  } else if(kind==='held'){
+    text.textContent = "This change would remove most of your planner, so it hasn't been saved to your account.";
+    primary.textContent = 'Undo it';
+    secondary.textContent = 'Save anyway';
+    secondary.style.display = '';
   }
+  banner.dataset.kind = kind;
+  banner.style.display = '';
+}
+function hideSyncBanner(){
+  document.getElementById('syncWarningBanner').style.display = 'none';
+}
+async function retryHeldSave(opts){
+  // Send the newest version (including anything changed since the save was held).
+  syncHalted = false; heldWrite = null;
+  const result = await supabaseWrite(JSON.stringify(state), opts);
+  if(result==='saved'){ hideSyncBanner(); writeLocalCopy(JSON.stringify(state)); }
+  else if(result==='conflict'){ syncHalted = true; showSyncBanner('conflict'); }
+  else if(result==='held'){ syncHalted = true; showSyncBanner('held'); }
+  else showSyncBanner('save-failed');
+}
+document.getElementById('syncRetryBtn').addEventListener('click', async ()=>{
+  const kind = document.getElementById('syncWarningBanner').dataset.kind;
+  const btn = document.getElementById('syncRetryBtn');
+  if(kind==='save-failed'){
+    btn.textContent = 'Saving…';
+    await retryHeldSave({});
+    return;
+  }
+  // Load-failed, conflict ("load the latest") and held ("undo it") all start
+  // again from what's actually saved in the account.
+  btn.textContent = 'Loading…';
+  pendingSaveValue = null; queuedWrite = null;
+  location.reload();
+});
+document.getElementById('syncSecondaryBtn').addEventListener('click', async ()=>{
+  const kind = document.getElementById('syncWarningBanner').dataset.kind;
+  const btn = document.getElementById('syncSecondaryBtn');
+  btn.textContent = 'Saving…';
+  if(kind==='conflict') await retryHeldSave({force:true});
+  else if(kind==='held') await retryHeldSave({allowShrink:true});
 });
 
 /* ============ INIT ============ */
@@ -3783,33 +3975,17 @@ async function requireSignIn(){
 }
 async function checkSyncAndLoad(){
   await loadState();
-  const banner = document.getElementById('syncWarningBanner');
-  if(lastSyncError){
-    document.getElementById('syncWarningText').textContent =
-      "Couldn't reach your synced data" + (lastSyncErrorMessage ? ': '+lastSyncErrorMessage : '') + ' — this may be showing a blank or out-of-date view.';
-    banner.style.display = '';
-  } else {
-    banner.style.display = 'none';
-    // Signed in, but what we just loaded didn't come from Supabase (it came from
-    // this device's own storage, or there was nothing anywhere yet). Push it up
-    // right now so this account has something to sync from other devices —
-    // otherwise cross-device sync would silently do nothing until the next edit.
-    const session = await getSupabaseSession();
-    if(session && lastLoadSource!=='supabase'){
-      await supabaseSaveData(JSON.stringify(state));
-    }
+  if(!loadOk){ showSyncBanner('load-failed'); return; }
+  hideSyncBanner();
+  // Supabase confirmed this account has nothing saved yet: create its record
+  // now, so other devices have something to sync from. This can only ever add
+  // a record — if one turns out to exist after all, it's left untouched and
+  // the banner offers to load it.
+  if(supabaseConfigured && lastLoadSource!=='supabase'){
+    saveState();
+    await flushSave();
   }
 }
-document.getElementById('syncRetryBtn').addEventListener('click', async ()=>{
-  const btn = document.getElementById('syncRetryBtn');
-  btn.textContent = 'Retrying…';
-  cachedSupabaseSession = null; // force a fresh session check too, not just a cached one
-  await checkSyncAndLoad();
-  btn.textContent = 'Retry';
-  if(!lastSyncError){
-    applyTheme(); updateBrand(); buildMonthsDrawer(); goTo(currentPanel);
-  }
-});
 (async function init(){
   const ok = await requireSignIn();
   if(!ok) return; // redirecting to sign in — never reveal the app
